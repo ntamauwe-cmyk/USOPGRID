@@ -11,7 +11,7 @@
 | Authorization | 7 roles → 15 permissions, checked server-side on every function | `schema.ROLE_PERMISSIONS`, `lib/rbac.ts` |
 | Tenant isolation | Org derived from session/API key; every lookup re-checks `orgId`; inbound provider events for another org are rejected | all modules |
 | Platform staff | Operations console gated by `USOPGRID_PLATFORM_ADMINS`; every operator change requires an enrolled authenticator plus fresh step-up (no opt-out); every action audited as `operator:<email>` | `ops.ts`, `lib/rbac.requireOperatorStepUp` |
-| Federated identity | Tokens from the template's hosting platform are not trusted unless `USOPGRID_ALLOW_FEDERATED_LOGIN=true` | `auth.config.ts` |
+| Token issuers | Only this deployment's own sign-in tokens are accepted; the template's trust in its hosting platform's tokens was removed | `auth.config.ts` |
 | API keys | 256-bit random, shown once, SHA-256 at rest, sandbox/live split, rotation with grace period, revocation, per-key rate limit; live secret keys refused when sent from a browser (`Origin` header present) | `services.ts`, `lib/apikeys.ts`, `lib/httpservice.ts` |
 | Secrets at rest | AES-256-GCM, random 96-bit IV, AAD binds each ciphertext to its record (no swapping between records), versioned keyring with key ids, operator-run re-encryption (compare-and-set, audited); hints only to clients; destroyed on revoke | `lib/keyring.ts`, `keyRotation.ts` |
 | Card data | Never accepted; only provider tokens (`payment_token`) | API validation |

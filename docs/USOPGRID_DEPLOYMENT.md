@@ -39,7 +39,7 @@ Development: `npx convex dev` + `npm run dev`.
 - [ ] Merchant webhook endpoints verified with signature checking.
 - [ ] Sanctions screening configured; jurisdiction policy reviewed by counsel.
 - [ ] Sign-in email configured (`RESEND_API_KEY` + `OTP_EMAIL_FROM`); old template relay key revoked.
-- [ ] `USOPGRID_ALLOW_FEDERATED_LOGIN` unset; `VITE_EDITOR_PREVIEW` unset for the production build.
+- [ ] `VITE_EDITOR_PREVIEW` unset for the production build.
 - [ ] Every platform operator has enrolled an authenticator.
 - [ ] Security headers present: `curl -sI https://your-site | grep -i content-security-policy`.
 - [ ] Payout provider (Paystack/Flutterwave) webhook URL set to the connection's URL; Paystack "OTP for transfers" disabled for API transfers.
