@@ -242,6 +242,19 @@ export const transactions = defineTable({
   savePaymentMethod: v.optional(v.boolean()),
   /** Set on subscription renewal charges. */
   invoiceId: v.optional(v.id("invoices")),
+  /** Marketplace shares. allocatedMinor is set when the payment succeeds. */
+  splits: v.optional(
+    v.array(
+      v.object({
+        recipientId: v.id("recipients"),
+        recipientRef: v.string(),
+        amountMinor: v.number(),
+        percentBps: v.optional(v.number()),
+        allocatedMinor: v.optional(v.number()),
+        reversedMinor: v.optional(v.number()),
+      }),
+    ),
+  ),
   // Failure intelligence
   failureCategory: v.optional(v.string()),
   failureCode: v.optional(v.string()),
@@ -546,6 +559,8 @@ export const payouts = defineTable({
   orgId: v.id("organizations"),
   merchantId: v.id("merchants"),
   beneficiaryId: v.id("beneficiaries"),
+  /** Set when paying a marketplace recipient out of its own balance. */
+  recipientId: v.optional(v.id("recipients")),
   payoutId: v.string(), // po_...
   reference: v.string(), // idempotent merchant reference (unique per org)
   amountMinor: v.number(),
@@ -581,6 +596,27 @@ export const payouts = defineTable({
   .index("by_org_status_created", ["orgId", "status", "createdAt"])
   .index("by_status_updated", ["status", "updatedAt"])
   .index("by_rail_reference", ["railReference"]);
+
+// ---------------------------------------------------------------------------
+// Marketplace recipients — sellers or partners who receive shares of
+// payments. Each has its own ledger balance and is paid out to its own
+// beneficiary account.
+// ---------------------------------------------------------------------------
+export const recipients = defineTable({
+  orgId: v.id("organizations"),
+  recipientId: v.string(), // rcp_...
+  name: v.string(),
+  email: v.optional(v.string()),
+  beneficiaryId: v.id("beneficiaries"),
+  currency: v.string(),
+  status: v.union(v.literal("active"), v.literal("disabled")),
+  metadata: v.optional(v.any()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_recipient_id", ["recipientId"])
+  .index("by_org_created", ["orgId", "createdAt"])
+  .index("by_org_beneficiary", ["orgId", "beneficiaryId"]);
 
 // ---------------------------------------------------------------------------
 // Disputes — chargeback lifecycle per transaction.
@@ -1151,6 +1187,7 @@ const schema = defineSchema(
     paymentLinks,
     beneficiaries,
     payouts,
+    recipients,
     disputes,
     disputeEvents,
     providerHealth,

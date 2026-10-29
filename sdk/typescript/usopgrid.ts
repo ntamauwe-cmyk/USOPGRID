@@ -24,6 +24,31 @@ export interface PaymentCreate {
   return_url?: string;
   description?: string;
   metadata?: Record<string, string | number | boolean>;
+  /** Keep the payment method for future charges (needs customer.email). */
+  save_payment_method?: boolean;
+  /** Marketplace shares: exactly one of amount (minor units) or percent per recipient. */
+  splits?: { recipient: string; amount?: number; percent?: number }[];
+}
+
+export interface Recipient {
+  id: string;
+  object: "recipient";
+  name: string;
+  email: string | null;
+  currency: string;
+  status: "active" | "disabled";
+  balance: number;
+  payout_account: { name: string; bank: string; account: string; country: string | null } | null;
+  metadata: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface RecipientCreate {
+  name: string;
+  email?: string;
+  beneficiary_id?: string;
+  payout_account?: { holder_name?: string; bank_name: string; bank_code?: string; account_number: string; currency: string; country?: string; type?: "bank_account" | "mobile_money" };
+  metadata?: Record<string, string | number | boolean>;
 }
 
 export interface Payment {
@@ -145,6 +170,17 @@ export class Usopgrid {
 
   fx = {
     quote: (q: { from: string; to: string; amount: number }) => this.request<{ quote: Record<string, unknown> }>("POST", "/fx/quotes", q).then((r) => r.quote),
+  };
+
+  recipients = {
+    create: (r: RecipientCreate, o?: RequestOpts) => this.request<{ recipient: Recipient }>("POST", "/recipients", r, o).then((x) => x.recipient),
+    retrieve: (id: string) => this.request<{ recipient: Recipient }>("GET", `/recipients/${encodeURIComponent(id)}`).then((x) => x.recipient),
+    list: () => this.request<{ recipients: Recipient[] }>("GET", "/recipients").then((x) => x.recipients),
+    /** Pay out from the recipient's balance; omit amount for everything available. 202 responses carry `approval`. */
+    payout: (id: string, p: { amount?: number; narration?: string } = {}, o?: RequestOpts) =>
+      this.request<{ payout: { id: string; status: string; amount: number } | null; approval?: { id: string; status: string } }>("POST", `/recipients/${encodeURIComponent(id)}/payouts`, p, o),
+    disable: (id: string) => this.request<{ recipient: Recipient }>("POST", `/recipients/${encodeURIComponent(id)}/disable`, {}).then((x) => x.recipient),
+    enable: (id: string) => this.request<{ recipient: Recipient }>("POST", `/recipients/${encodeURIComponent(id)}/enable`, {}).then((x) => x.recipient),
   };
 
   providers = { list: () => this.request<{ data: unknown[] }>("GET", "/providers").then((r) => r.data) };

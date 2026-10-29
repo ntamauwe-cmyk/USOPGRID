@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, ArrowLeftRight, Landmark, KeyRound, Webhook, Github, Users, ScrollText, LogOut, Loader2, Link2, Send, ShieldAlert,
-  Contact, Network, Route, Scale, BarChart3, FileText, Building2, Lock, Bell, Activity, Menu, ShieldCheck, Repeat,
+  Contact, Network, Route, Scale, BarChart3, FileText, Building2, Lock, Bell, Activity, Menu, ShieldCheck, Repeat, Store,
 } from "lucide-react";
 import { UsopgridLogo } from "@/components/brand";
 import { StepUpProvider } from "@/components/StepUp";
@@ -24,6 +24,7 @@ const GROUPS: { label: string; items: Item[] }[] = [
       { to: "/dashboard/customers", label: "Customers", icon: Contact },
       { to: "/dashboard/links", label: "Payment links", icon: Link2 },
       { to: "/dashboard/billing", label: "Billing", icon: Repeat },
+      { to: "/dashboard/marketplace", label: "Marketplace", icon: Store },
       { to: "/dashboard/payouts", label: "Payouts", icon: Send },
       { to: "/dashboard/approvals", label: "Approvals", icon: ShieldCheck },
       { to: "/dashboard/disputes", label: "Disputes", icon: ShieldAlert },

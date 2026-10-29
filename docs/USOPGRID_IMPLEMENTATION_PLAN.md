@@ -33,7 +33,7 @@ API keys and 6-role RBAC. Defects found and fixed in this pass:
 | 6 Analytics | Done | Analytics dashboard, provider ranking, cost per success, forecasts, anomaly cron, API usage, CSV reports |
 | 7 User experience | Done | Website and all dashboard screens rendered and reviewed on desktop and phone (dashboard via `npm run preview:fixtures`, fixtures type-checked against the real backend return types); phone layouts of transaction tables fixed |
 | 8 Optimization | Partial | Indexed queries for every hot path, bounded batch sizes, self-hosted subset fonts (≈210 KB); load testing not run |
-| 9 Testing and deployment prep | Done (except deploying) | 116 unit tests; `tsc -b` and backend tsconfig clean with the real packages; ESLint 0 errors; `vite build` succeeds; `npm audit` 0 vulnerabilities; CI workflow. Convex codegen/deploy needs your Convex project |
+| 9 Testing and deployment prep | Done | 159 unit tests (Bun) and 29 end-to-end tests through the real HTTP API and backend functions (Vitest + convex-test); `tsc -b` and backend tsconfig clean; ESLint 0 errors; `vite build` succeeds; CI runs all of it; deployed on Convex + Vercel |
 
 ## Feature matrix
 
@@ -62,6 +62,14 @@ API keys and 6-role RBAC. Defects found and fixed in this pass:
 | Payouts to real rails (Paystack, Flutterwave; sandbox simulation), encrypted beneficiary accounts, ambiguity recovery by lookup, webhook confirmation, 72 h escalation | Partial (code + mocked-HTTP tests; live verification needs provider keys) |
 | Direct rails (own licences: NIBSS NIP, ISO 8583 acquirer link, card vault) | Planned. Needs licences and network specifications; see the provider integrations doc |
 | Dedicated open-banking (A2A) adapter | Planned |
+| Enterprise single sign-on (Google, Microsoft Entra ID, Okta, any OIDC), switched on by environment variables | Done (needs the identity provider's client id and secret) |
+| API key scopes (full / read-only) and IP allowlists | Done |
+| Two-person approval for payouts, bulk payouts and policy weakening | Done |
+| Bulk payouts from CSV (validated whole-file, chunked, idempotent per row) | Done |
+| Recurring billing: saved payment methods, plans, subscriptions, invoices, retries | Done (live token capture verified with mocked provider HTTP only) |
+| Marketplace split payments: recipients, shares, proportional refund reversal, recipient payouts | Done |
+| Routing backtest and provider scorecards with confidence intervals | Done |
+| End-to-end suite on the real backend functions (convex-test) | Done |
 | Load/performance test suite | Planned |
 
 ## Access and actions needed from the owner

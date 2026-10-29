@@ -30,11 +30,14 @@ import { fingerprint } from "./lib/idempotency";
 import { listDescriptors, getAdapter, PAYMENT_METHODS } from "./providers/index";
 import { route as routePayment } from "./orchestration/router";
 import { STATE_LABELS } from "./orchestration/states";
-import type { ProcessResult, TransactionSummary } from "./payments";
+import { splitSummaries, type ProcessResult, type TransactionSummary } from "./payments";
+import { parseSplitInputs, SplitError } from "./lib/splits";
+import { payRecipient, type RecipientView } from "./recipients";
+import { ConvexError } from "convex/values";
 import type { RoutingContext } from "./connections";
 import { CURRENCIES, COUNTRIES } from "../lib/geo";
 import { buildOpenApiSpec } from "./lib/openapi";
-import { approvalGate } from "./payouts";
+import { approvalGate, prepareBeneficiary } from "./payouts";
 
 type Handler = (ctx: ActionCtx, request: Request, key: AuthedKey, requestId: string) => Promise<Response>;
 
@@ -119,6 +122,7 @@ function paymentJson(t: TransactionSummary) {
     outcome_unknown: t.outcomeUnknown,
     next_action: t.nextAction,
     failure: t.failure,
+    splits: t.splits ?? [],
     created_at: new Date(t.createdAt).toISOString(),
   };
 }
@@ -145,6 +149,7 @@ function txnJson(t: Doc<"transactions">) {
       ? { category: t.failureCategory ?? "", code: t.failureCode, message: t.failureMessage ?? "", retryable: t.failureRetryable ?? false }
       : null,
     createdAt: t.createdAt,
+    splits: splitSummaries(t),
   });
 }
 
@@ -179,6 +184,13 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
   const reference = optString(body, 120, "reference") ?? `ref_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
   const metadata = sanitizeMetadata(pick(body, "metadata"));
   const savePaymentMethod = pick(body, "save_payment_method", "savePaymentMethod") === true;
+  let splits;
+  try {
+    splits = parseSplitInputs(pick(body, "splits"));
+  } catch (err) {
+    if (err instanceof SplitError) throw new ApiError("validation_error", err.message);
+    throw err;
+  }
 
   if (!Number.isSafeInteger(amountMinor) || (amountMinor as number) <= 0) {
     throw new ApiError("validation_error", "amount must be a positive integer in the currency's minor unit (e.g. cents).");
@@ -213,6 +225,7 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
     requestId,
     actor: key.prefix,
     savePaymentMethod: savePaymentMethod || undefined,
+    splits,
   };
 
   const idemKey = request.headers.get("Idempotency-Key");
@@ -224,7 +237,7 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
   if (idemKey.length > 255) throw new ApiError("validation_error", "Idempotency-Key must be at most 255 characters.");
 
   // Fingerprint covers client-supplied fields only (never server-generated ones).
-  const fp = await fingerprint({ amountMinor, currency, paymentMethod, country: country ?? null, reference: pick(body, "reference") ?? null, customerEmail: customerEmail ?? null, metadata: metadata ?? null, env: key.environment, savePaymentMethod });
+  const fp = await fingerprint({ amountMinor, currency, paymentMethod, country: country ?? null, reference: pick(body, "reference") ?? null, customerEmail: customerEmail ?? null, metadata: metadata ?? null, env: key.environment, savePaymentMethod, splits: splits ?? null });
   const acquired = await ctx.runMutation(internal.lib.idempotency.acquireInternal, { orgId, key: idemKey, fp });
   if (acquired.type === "replay") return jsonOk(acquired.responseBody, acquired.statusCode, requestId);
   if (acquired.type === "conflict") throw new ApiError("idempotency_conflict", "This Idempotency-Key was already used with a different request body.");
@@ -688,6 +701,138 @@ export const subscriptionAction = endpoint("POST /subscriptions/:id/cancel", asy
     return jsonOk({ subscription: s }, 200, requestId);
   } catch (err) {
     return billingError(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Marketplace recipients and their payouts
+// ---------------------------------------------------------------------------
+function recipientJson(r: RecipientView) {
+  return {
+    id: r.id,
+    object: "recipient",
+    name: r.name,
+    email: r.email,
+    currency: r.currency,
+    status: r.status,
+    balance: r.balanceMinor,
+    payout_account: r.payoutAccount,
+    metadata: r.metadata,
+    created_at: new Date(r.createdAt).toISOString(),
+  };
+}
+
+export const listRecipients = endpoint("GET /recipients", async (ctx, request, key, requestId) => {
+  const limit = Number(new URL(request.url).searchParams.get("limit") ?? 50) || 50;
+  const rows: RecipientView[] = await ctx.runQuery(internal.recipients.listInternal, { orgId: key.orgId as Id<"organizations">, limit });
+  return jsonOk({ recipients: rows.map(recipientJson) }, 200, requestId);
+});
+
+export const createRecipient = endpoint("POST /recipients", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  const name = optString(body, 120, "name");
+  if (!name) throw new ApiError("validation_error", "name is required.");
+  const email = optString(body, 254, "email");
+  const metadata = sanitizeMetadata(pick(body, "metadata"));
+  const acct = pick<Record<string, unknown>>(body, "payout_account", "payoutAccount");
+  const beneficiaryRef = optString(body, 64, "beneficiary_id", "beneficiaryId");
+  if (!!acct === !!beneficiaryRef) throw new ApiError("validation_error", "Send either payout_account (new bank or wallet details) or beneficiary_id (an existing payout account).");
+  const orgId = key.orgId as Id<"organizations">;
+  try {
+    let beneficiaryId: Id<"beneficiaries">;
+    if (acct) {
+      if (typeof acct !== "object" || Array.isArray(acct)) throw new ApiError("validation_error", "payout_account must be an object.");
+      const accountType = optString(acct, 20, "type", "account_type");
+      if (accountType !== undefined && accountType !== "bank_account" && accountType !== "mobile_money") throw new ApiError("validation_error", "payout_account.type must be bank_account or mobile_money.");
+      const prepared = await prepareBeneficiary(orgId, key.environment, {
+        name: optString(acct, 120, "holder_name", "name") ?? name,
+        bankName: optString(acct, 120, "bank_name", "bankName") ?? "",
+        bankCode: optString(acct, 20, "bank_code", "bankCode"),
+        accountNumber: optString(acct, 40, "account_number", "accountNumber") ?? "",
+        currency: (optString(acct, 3, "currency") ?? "").toUpperCase(),
+        country: optString(acct, 2, "country"),
+        accountType: accountType as "bank_account" | "mobile_money" | undefined,
+      });
+      beneficiaryId = (await ctx.runMutation(internal.payouts.insertBeneficiaryInternal, prepared))._id;
+    } else {
+      const b = await ctx.runQuery(internal.apiInternal.beneficiaryByIdInternal, { beneficiaryId: beneficiaryRef as Id<"beneficiaries"> }).catch(() => null);
+      if (!b || b.orgId !== orgId) throw new ApiError("not_found", "Beneficiary not found in this organization.");
+      beneficiaryId = b._id;
+    }
+    const r: RecipientView = await ctx.runMutation(internal.recipients.createInternal, { orgId, name, email, beneficiaryId, metadata, actor: key.prefix });
+    return jsonOk({ recipient: recipientJson(r) }, 201, requestId);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    return billingError(err instanceof ConvexError ? new Error(String(err.data)) : err);
+  }
+});
+
+export const getRecipient = endpoint("GET /recipients/:id", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts.length !== 4) throw new ApiError("not_found", "Unknown endpoint.");
+  const r: RecipientView | null = await ctx.runQuery(internal.recipients.getInternal, { orgId: key.orgId as Id<"organizations">, recipientId: parts[3] });
+  if (!r) throw new ApiError("not_found", "Recipient not found.");
+  return jsonOk({ recipient: recipientJson(r) }, 200, requestId);
+});
+
+/** POST /recipients/:id/payouts · /disable · /enable */
+export const recipientAction = endpoint("POST /recipients/:id/action", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  const verb = parts[4];
+  if (parts.length !== 5 || !["payouts", "disable", "enable"].includes(verb)) throw new ApiError("not_found", "Unknown endpoint.");
+  const orgId = key.orgId as Id<"organizations">;
+  const r: RecipientView | null = await ctx.runQuery(internal.recipients.getInternal, { orgId, recipientId: parts[3] });
+  if (!r) throw new ApiError("not_found", "Recipient not found.");
+  try {
+    if (verb !== "payouts") {
+      await ctx.runMutation(internal.recipients.setStatusInternal, { orgId, recipientDocId: r._id, status: verb === "enable" ? "active" : "disabled", actor: key.prefix });
+      const after: RecipientView | null = await ctx.runQuery(internal.recipients.getInternal, { orgId, recipientId: parts[3] });
+      return jsonOk({ recipient: recipientJson(after!) }, 200, requestId);
+    }
+    const body = await readJsonBody(request).catch(() => ({}) as Record<string, unknown>);
+    const amount = pick<number>(body, "amount");
+    if (amount !== undefined && (!Number.isSafeInteger(amount) || amount <= 0)) throw new ApiError("validation_error", "amount must be a positive integer (minor units); omit it to pay out the full available balance.");
+    const narration = optString(body, 140, "narration");
+    const pay = async (): Promise<{ status: number; body: unknown }> => {
+      const out = await payRecipient(ctx, {
+        orgId,
+        recipientDocId: r._id,
+        amountMinor: amount,
+        narration,
+        requestedBy: `api:${key.prefix}`,
+        requestedByLabel: `API key ${key.prefix}`,
+        idempotencyKey: idem ? `recipient_payout_${r.id}_${idem}` : undefined,
+        actor: key.prefix,
+      });
+      if (out.kind === "pending_approval") {
+        return { status: 202, body: { payout: null, approval: { id: out.approvalId, status: "pending_approval", amount: out.amountMinor, message: "This payout needs a second approver in the USOPGRID dashboard (Approvals) before money moves." } } };
+      }
+      return { status: 201, body: { payout: { id: out.payoutId, status: out.status, amount: out.amountMinor, currency: r.currency, recipient: r.id } } };
+    };
+    // "Pay the whole balance" depends on the balance, so retries must replay
+    // the first response rather than recompute it.
+    const idem = request.headers.get("Idempotency-Key");
+    if (!idem) {
+      const res = await pay();
+      return jsonOk(res.body, res.status, requestId);
+    }
+    if (idem.length > 255) throw new ApiError("validation_error", "Idempotency-Key must be at most 255 characters.");
+    const fp = await fingerprint({ recipient: r.id, amount: amount ?? null, narration: narration ?? null, kind: "recipient_payout" });
+    const acquired = await ctx.runMutation(internal.lib.idempotency.acquireInternal, { orgId, key: `recipient_payout_${r.id}_${idem}`, fp });
+    if (acquired.type === "replay") return jsonOk(acquired.responseBody, acquired.statusCode, requestId);
+    if (acquired.type === "conflict") throw new ApiError("idempotency_conflict", "This Idempotency-Key was already used with a different request body.");
+    if (acquired.type === "in_progress") throw new ApiError("conflict", "An identical request is currently in progress. Retry shortly.", true, { retryAfterSec: 2 });
+    try {
+      const res = await pay();
+      await ctx.runMutation(internal.lib.idempotency.completeInternal, { recordId: acquired.recordId as Id<"idempotencyKeys">, response: { statusCode: res.status, body: res.body }, transactionId: undefined });
+      return jsonOk(res.body, res.status, requestId);
+    } catch (err) {
+      await ctx.runMutation(internal.lib.idempotency.failInternal, { recordId: acquired.recordId as Id<"idempotencyKeys"> });
+      throw err;
+    }
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    return billingError(err instanceof ConvexError ? new Error(String(err.data)) : err);
   }
 });
 

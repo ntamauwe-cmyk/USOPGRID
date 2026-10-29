@@ -17,7 +17,8 @@ import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { computeFees } from "./lib/fees";
 import { evaluatePaymentRisk } from "./lib/risk";
-import { postDoubleEntry, merchantAccountCode, providerClearingCode, feesAccountCode, ACCOUNT_KINDS } from "./lib/ledger";
+import { postDoubleEntry, merchantAccountCode, providerClearingCode, feesAccountCode, recipientAccountCode, ACCOUNT_KINDS, type Posting } from "./lib/ledger";
+import { capShares, refundReversals, type SplitInput } from "./lib/splits";
 import { logAudit } from "./lib/audit";
 import { withIdempotency, fingerprint } from "./lib/idempotency";
 import { getAdapter, PAYMENT_METHODS } from "./providers/index";
@@ -105,6 +106,25 @@ export interface TransactionSummary {
   nextAction: { type: string; url?: string; instructions?: string; expiresAt?: number } | null;
   failure: { category: string; code: string; message: string; retryable: boolean } | null;
   createdAt: number;
+  splits?: SplitSummary[];
+}
+
+export interface SplitSummary {
+  recipient: string;
+  amount: number;
+  percent: number | null;
+  allocated: number | null;
+  reversed: number;
+}
+
+export function splitSummaries(t: Pick<Doc<"transactions">, "splits">): SplitSummary[] | undefined {
+  return t.splits?.map((sp) => ({
+    recipient: sp.recipientRef,
+    amount: sp.amountMinor,
+    percent: sp.percentBps !== undefined ? sp.percentBps / 100 : null,
+    allocated: sp.allocatedMinor ?? null,
+    reversed: sp.reversedMinor ?? 0,
+  }));
 }
 
 export function summarize(t: Doc<"transactions">): TransactionSummary {
@@ -130,6 +150,7 @@ export function summarize(t: Doc<"transactions">): TransactionSummary {
         ? { category: t.failureCategory, code: t.failureCode, message: t.failureMessage ?? "", retryable: t.failureRetryable ?? false }
         : null,
     createdAt: t.createdAt,
+    splits: splitSummaries(t),
   };
 }
 
@@ -265,6 +286,7 @@ export const createTransactionInternal = internalMutation({
     actor: v.optional(v.string()),
     savePaymentMethod: v.optional(v.boolean()),
     invoiceId: v.optional(v.id("invoices")),
+    splits: v.optional(v.array(v.object({ recipientId: v.id("recipients"), recipientRef: v.string(), amountMinor: v.number(), percentBps: v.optional(v.number()) }))),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -294,6 +316,7 @@ export const createTransactionInternal = internalMutation({
       metadata: args.metadata,
       savePaymentMethod: args.savePaymentMethod,
       invoiceId: args.invoiceId,
+      splits: args.splits,
       attemptCount: 0,
       failoverCount: 0,
       createdAt: now,
@@ -436,6 +459,116 @@ async function finalizeFailure(
   return updated;
 }
 
+/**
+ * Move each recipient's share out of the merchant's net into the
+ * recipient's own balance. Shares were checked against the estimated net
+ * when the payment was created; if actual fees left less, the last shares
+ * are reduced and the shortfall is recorded on the payment.
+ */
+async function allocateSplits(ctx: MutationCtx, txn: Doc<"transactions">, netMinor: number, actor?: string) {
+  const splits = txn.splits ?? [];
+  if (splits.some((sp) => sp.allocatedMinor !== undefined)) return; // already allocated
+  const { shares, shortfallMinor } = capShares(splits, netMinor);
+  const postings: Posting[] = [];
+  let total = 0;
+  for (const sh of shares) {
+    if (sh.allocatedMinor <= 0) continue;
+    total += sh.allocatedMinor;
+    postings.push({
+      account: {
+        orgId: txn.orgId,
+        currency: txn.currency,
+        kind: ACCOUNT_KINDS.RECIPIENT_BALANCE,
+        code: recipientAccountCode(sh.recipientId, txn.currency),
+        name: `Recipient ${sh.recipientRef} balance ${txn.currency}`,
+      },
+      direction: "credit",
+      amountMinor: sh.allocatedMinor,
+      description: `Share of ${txn.transactionId}`,
+    });
+  }
+  if (total > 0) {
+    await postDoubleEntry(ctx, {
+      orgId: txn.orgId,
+      ledgerRef: `SPL-${txn.transactionId}`,
+      transactionId: txn._id,
+      postings: [
+        {
+          account: {
+            orgId: txn.orgId,
+            merchantId: txn.merchantId,
+            currency: txn.currency,
+            kind: ACCOUNT_KINDS.MERCHANT_BALANCE,
+            code: merchantAccountCode(txn.merchantId, txn.currency),
+            name: `merchant balance ${txn.currency}`,
+          },
+          direction: "debit",
+          amountMinor: total,
+          description: `Shares paid to recipients from ${txn.transactionId}`,
+        },
+        ...postings,
+      ],
+    });
+  }
+  await ctx.db.patch(txn._id, {
+    splits: shares.map((sh) => ({ recipientId: sh.recipientId, recipientRef: sh.recipientRef, amountMinor: sh.amountMinor, percentBps: sh.percentBps, allocatedMinor: sh.allocatedMinor, reversedMinor: 0 })),
+  });
+  await recordEvent(ctx, txn._id, {
+    type: "splits.allocated",
+    actor: actor ?? "system",
+    data: { totalMinor: total, shortfallMinor, shares: shares.map((sh) => ({ recipient: sh.recipientRef, amountMinor: sh.allocatedMinor })) },
+  });
+}
+
+/** Reverse recipients' shares in proportion to a successful refund. */
+async function reverseSplits(ctx: MutationCtx, txn: Doc<"transactions">, refundId: string, refundedBefore: number, refundMinor: number, actor: string) {
+  const splits = txn.splits ?? [];
+  if (!splits.some((sp) => (sp.allocatedMinor ?? 0) > 0)) return;
+  const deltas = refundReversals(splits.map((sp) => ({ allocatedMinor: sp.allocatedMinor ?? 0 })), txn.amountMinor, refundedBefore, refundMinor);
+  const total = deltas.reduce((n, d) => n + d, 0);
+  if (total <= 0) return;
+  await postDoubleEntry(ctx, {
+    orgId: txn.orgId,
+    ledgerRef: `SPLR-${refundId}`,
+    transactionId: txn._id,
+    postings: [
+      ...splits.flatMap((sp, i): Posting[] =>
+        deltas[i] > 0
+          ? [
+              {
+                account: {
+                  orgId: txn.orgId,
+                  currency: txn.currency,
+                  kind: ACCOUNT_KINDS.RECIPIENT_BALANCE,
+                  code: recipientAccountCode(sp.recipientId, txn.currency),
+                  name: `Recipient ${sp.recipientRef} balance ${txn.currency}`,
+                },
+                direction: "debit",
+                amountMinor: deltas[i],
+                description: `Share reversed for refund ${refundId}`,
+              },
+            ]
+          : [],
+      ),
+      {
+        account: {
+          orgId: txn.orgId,
+          merchantId: txn.merchantId,
+          currency: txn.currency,
+          kind: ACCOUNT_KINDS.MERCHANT_BALANCE,
+          code: merchantAccountCode(txn.merchantId, txn.currency),
+          name: `merchant balance ${txn.currency}`,
+        },
+        direction: "credit",
+        amountMinor: total,
+        description: `Recipient shares returned for refund ${refundId}`,
+      },
+    ],
+  });
+  await ctx.db.patch(txn._id, { splits: splits.map((sp, i) => ({ ...sp, reversedMinor: (sp.reversedMinor ?? 0) + deltas[i] })) });
+  await recordEvent(ctx, txn._id, { type: "splits.reversed", actor, data: { refundId, totalMinor: total, shares: splits.map((sp, i) => ({ recipient: sp.recipientRef, amountMinor: deltas[i] })) } });
+}
+
 async function finalizeSuccess(
   ctx: MutationCtx,
   txn: Doc<"transactions">,
@@ -539,6 +672,8 @@ async function finalizeSuccess(
         : []),
     ],
   });
+
+  if (txn.splits && txn.splits.length > 0) await allocateSplits(ctx, txn, fees.netMinor, p.actor);
 
   if (txn.customerEmail) {
     await ctx.runMutation(internal.customers.upsertCustomerInternal, {
@@ -798,6 +933,8 @@ export const processPaymentInternal = internalAction({
     /** Saved tokens only work at the provider that issued them: route there only. */
     pinnedConnectionId: v.optional(v.string()),
     invoiceId: v.optional(v.id("invoices")),
+    /** Marketplace shares: recipient ids with an amount or a percentage. */
+    splits: v.optional(v.array(v.object({ recipient: v.string(), amount: v.optional(v.number()), percent: v.optional(v.number()) }))),
   },
   handler: async (ctx, args): Promise<ProcessResult> => {
     // ---- 1. Static validation (nothing persisted on failure) ----
@@ -816,6 +953,19 @@ export const processPaymentInternal = internalAction({
     const usd = await ctx.runQuery(internal.fxrates.usdEquivalentInternal, { amountMinor: args.amountMinor, currency: args.currency });
     if (pc.maxTransactionMinor !== undefined && usd !== null && usd > pc.maxTransactionMinor) {
       return reject("validation_error", `Amount exceeds this organization's per-transaction limit (USD ${(pc.maxTransactionMinor / 100).toFixed(2)}).`);
+    }
+
+    let splits: { recipientId: Id<"recipients">; recipientRef: string; amountMinor: number; percentBps?: number }[] | undefined;
+    if (args.splits && args.splits.length > 0) {
+      const res = await ctx.runQuery(internal.recipients.resolveSplitsInternal, {
+        orgId: args.orgId,
+        merchantId: args.merchantId,
+        amountMinor: args.amountMinor,
+        currency: args.currency,
+        splits: args.splits as SplitInput[],
+      });
+      if (!res.ok) return reject("validation_error", res.message);
+      splits = res.splits;
     }
 
     // ---- 2. Create the record ----
@@ -837,6 +987,7 @@ export const processPaymentInternal = internalAction({
       actor: args.actor,
       savePaymentMethod: args.savePaymentMethod,
       invoiceId: args.invoiceId,
+      splits,
     });
 
     // ---- 3. Risk + compliance ----
@@ -1171,6 +1322,7 @@ export const completeRefundInternal = internalMutation({
         },
       ],
     });
+    await reverseSplits(ctx, txn, rf.refundId, total - rf.amountMinor, rf.amountMinor, a.actor);
     const jobs = await ctx.db.query("recoveryJobs").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
     for (const j of jobs) if (j.status === "open" && j.refundId === rf.refundId) await ctx.db.patch(j._id, { status: "resolved", lastResult: "refund successful", updatedAt: Date.now() });
     await enqueueWebhooks(ctx, txn, "payment.refunded", { refund: { id: rf.refundId, amount: rf.amountMinor, provider_reference: a.providerRefundReference ?? null } });

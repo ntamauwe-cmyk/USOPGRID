@@ -21,7 +21,8 @@ Wallet, Penroute, RAE Mind AI and Heyra. (Formerly developed as RAEVOLT; see
 | **Orchestration** | Explainable scoring on success rate, cost (with fee caps) and latency; prefer/exclude/only rules; circuit breakers; safe failover; recovery queue for ambiguous outcomes. |
 | **Precision** | Integer money, exact FX, balanced immutable ledger, settlement-report reconciliation with typed exceptions and audited resolutions. |
 | **Intelligence** | Provider ranking, success/approval/failover rates by country, method and currency, cost per success, anomaly alerts, forecasts, CSV reports, API usage. |
-| **Enterprise** | 7 roles / 15 permissions, invitations, TOTP MFA with step-up for sensitive actions, key rotation, org limits, notifications, operations console for staff. |
+| **Money movement** | Payouts to bank and mobile-money accounts, bulk payouts from CSV, marketplace split payments with recipient balances, recurring billing with saved payment methods, plans, subscriptions and automatic retries. |
+| **Enterprise** | 7 roles / 16 permissions, invitations, single sign-on (Google, Microsoft Entra ID, Okta, any OIDC), TOTP MFA with step-up, two-person approval for payouts, read-only and IP-restricted API keys, key rotation, org limits, notifications, operations console for staff. |
 
 ## Repository map
 
@@ -35,12 +36,15 @@ src/
     orchestration/          states · router · engine · circuit · retry · compliance  (pure, tested)
     providers/              adapter contract + 12 adapters                           (pure, tested)
     lib/                    fx · fees · risk · recon · analytics · openapi · crypto · ledger …
-    payments.ts             orchestration action, finalizers, refunds
+    payments.ts             orchestration action, finalizers, refunds, split allocation
+    recipients.ts           marketplace recipients and their payouts
+    billing.ts · approvals.ts · bulkPayouts.ts · payouts.ts
     connections.ts          sealed credentials, routing context, circuits, telemetry
     recovery.ts · providerWebhooks.ts · fxrates.ts · analytics.ts · reconciliation.ts
     routing.ts · providers.ts · security.ts · ops.ts · notifications.ts · contact.ts
     api.ts · http.ts        public REST API /api/v1
   tests/                    Bun unit tests
+  e2e/                      End-to-end tests on the real backend (Vitest + convex-test)
 sdk/typescript/             Zero-dependency typed client
 docs/                       USOPGRID_* architecture, plan, providers, API, security, deployment, operations
 public/                     logo.svg · favicon.svg · wordmark.svg · og-image.svg · fonts/

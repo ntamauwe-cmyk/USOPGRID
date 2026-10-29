@@ -241,10 +241,11 @@ export const decide = action({
     if (a.decision === "reject") return { status: "rejected" };
     try {
       if (r.kind === "payout") {
-        const p = r.payload as { beneficiaryId: Id<"beneficiaries">; amountMinor: number; narration?: string; simulate?: string };
+        const p = r.payload as { beneficiaryId: Id<"beneficiaries">; amountMinor: number; narration?: string; simulate?: string; recipientId?: Id<"recipients"> };
         const out = await ctx.runAction(internal.payouts.payoutInternal, {
           orgId: r.orgId,
           beneficiaryId: p.beneficiaryId,
+          recipientId: p.recipientId,
           amountMinor: p.amountMinor,
           narration: p.narration,
           simulate: p.simulate,

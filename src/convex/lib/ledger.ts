@@ -10,7 +10,7 @@
 
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
-import type { MutationCtx } from "../_generated/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 import type { Id } from "../_generated/dataModel";
 
 // ---------------------------------------------------------------------------
@@ -23,6 +23,7 @@ export const ACCOUNT_KINDS = {
   SETTLEMENT_PAYABLE: "settlement_payable",
   RESERVE: "reserve",
   SUSPENSE: "suspense",
+  RECIPIENT_BALANCE: "recipient_balance",
 } as const;
 
 export function merchantAccountCode(merchantId: string, currency: string) {
@@ -36,6 +37,9 @@ export function feesAccountCode(currency: string) {
 }
 export function settlementPayableCode(merchantId: string, currency: string) {
   return `settle_pay_${merchantId}_${currency}`;
+}
+export function recipientAccountCode(recipientDocId: string, currency: string) {
+  return `rcpt_${recipientDocId}_${currency}`;
 }
 export function reserveAccountCode(merchantId: string, currency: string) {
   return `reserve_${merchantId}_${currency}`;
@@ -77,6 +81,20 @@ export async function getOrCreateAccount(
     kind: args.kind,
     currency: args.currency,
   };
+}
+
+/** Credit-normal balance of one account (credits minus debits), from the entries. */
+export async function accountBalanceMinor(ctx: QueryCtx | MutationCtx, code: string): Promise<number> {
+  const account = await ctx.db
+    .query("ledgerAccounts")
+    .withIndex("by_code", (q) => q.eq("code", code))
+    .unique();
+  if (!account) return 0;
+  let balance = 0;
+  for await (const e of ctx.db.query("ledgerEntries").withIndex("by_account_at", (q) => q.eq("accountId", account._id))) {
+    balance += e.direction === "credit" ? e.amountMinor : -e.amountMinor;
+  }
+  return balance;
 }
 
 // ---------------------------------------------------------------------------
