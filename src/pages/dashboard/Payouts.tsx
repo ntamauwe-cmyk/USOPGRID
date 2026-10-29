@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -38,6 +39,7 @@ import {
   UserPlus,
   Send,
   Wallet,
+  FileSpreadsheet,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -72,6 +74,7 @@ export default function Payouts() {
   const createBeneficiary = useAction(api.payouts.createBeneficiary);
   const sensitive = useSensitive();
   const createPayout = useAction(api.payouts.createDashboardPayout);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const [benOpen, setBenOpen] = useState(false);
   const [bName, setBName] = useState("");
@@ -143,7 +146,8 @@ export default function Payouts() {
           simulate: environment === "sandbox" ? pSimulate : undefined,
         }),
       );
-      toast.success(`Payout ${r.payoutId} — ${r.status.toLowerCase().replace(/_/g, " ")}.`);
+      if (r.status === "PENDING_APPROVAL") toast.success("Sent for approval. A second team member must approve it under Approvals before money moves.");
+      else toast.success(`Payout ${r.payoutId} — ${r.status.toLowerCase().replace(/_/g, " ")}.`);
       setPayOpen(false);
       setPAmount("");
       setPNarration("");
@@ -162,7 +166,10 @@ export default function Payouts() {
         title="Payouts"
         description="Move money from your balance to any bank account — with a full ledger trail for every payout and status."
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setBulkOpen(true)}>
+              <FileSpreadsheet className="size-4" /> Bulk payout
+            </Button>
             <Button variant="outline" onClick={() => setBenOpen(true)}>
               <UserPlus className="size-4" /> Add beneficiary
             </Button>
@@ -220,6 +227,8 @@ export default function Payouts() {
           )}
         </CardContent>
       </Card>
+
+      <BatchesCard />
 
       {/* Payout history */}
       <Card className="mt-6">
@@ -422,6 +431,142 @@ export default function Payouts() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      {bulkOpen && <BulkPayoutDialog onClose={() => setBulkOpen(false)} />}
     </div>
+  );
+}
+
+function BatchesCard() {
+  const batches = useQuery(api.bulkPayouts.listBatches, {});
+  const [open, setOpen] = useState<string | null>(null);
+  if (!batches || batches.length === 0) return null;
+  return (
+    <Card className="mt-6">
+      <CardHeader>
+        <CardTitle className="text-base">Bulk payouts</CardTitle>
+        <CardDescription>Each row is paid separately with its own safeguard against double payment.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {batches.map((b) => (
+          <div key={b._id} className="rounded-md border">
+            <button type="button" className="flex w-full flex-wrap items-center justify-between gap-3 px-4 py-3 text-left" onClick={() => setOpen(open === b._id ? null : b._id)} aria-expanded={open === b._id}>
+              <span className="min-w-0">
+                <span className="block font-medium text-heading">{b.name}</span>
+                <span className="text-xs text-muted-foreground">{b.count} payouts · {b.totals.join(" + ")} · {b.createdByLabel} · {new Date(b.createdAt).toLocaleString()}</span>
+              </span>
+              <span className="flex items-center gap-3 text-xs text-muted-foreground">
+                {b.submitted !== null && <span>{b.submitted} submitted{b.refused ? `, ${b.refused} refused` : ""}</span>}
+                <StatusPill status={b.status === "pending_approval" ? "PENDING" : b.status === "processing" ? "PROCESSING" : b.status === "completed" ? "SUCCESSFUL" : "CANCELLED"} />
+              </span>
+            </button>
+            {open === b._id && <BatchItems batchId={b._id} />}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function BatchItems({ batchId }: { batchId: Id<"payoutBatches"> }) {
+  const items = useQuery(api.bulkPayouts.batchItems, { batchId });
+  if (items === undefined) return <div className="px-4 pb-4"><Loader2 className="size-4 animate-spin text-muted-foreground" /></div>;
+  return (
+    <div className="overflow-x-auto border-t">
+      <Table>
+        <TableHeader>
+          <TableRow><TableHead>Line</TableHead><TableHead>Beneficiary</TableHead><TableHead className="text-right">Amount</TableHead><TableHead>Status</TableHead><TableHead>Payout</TableHead></TableRow>
+        </TableHeader>
+        <TableBody>
+          {items.map((i) => (
+            <TableRow key={i.line}>
+              <TableCell className="tabular-nums text-muted-foreground">{i.line}</TableCell>
+              <TableCell><div className="text-sm">{i.name}</div><div className="text-xs text-muted-foreground">{i.account}{i.reference ? ` · ${i.reference}` : ""}</div></TableCell>
+              <TableCell className="text-right tabular-nums">{i.amount}</TableCell>
+              <TableCell><StatusPill status={i.payoutStatus ?? (i.status === "refused" ? "FAILED" : i.status === "cancelled" ? "CANCELLED" : "PENDING")} />{i.error && <div className="mt-1 max-w-[18rem] text-xs text-status-failed">{i.error}</div>}</TableCell>
+              <TableCell className="font-mono text-xs text-muted-foreground">{i.payoutId ?? "—"}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function BulkPayoutDialog({ onClose }: { onClose: () => void }) {
+  const template = useQuery(api.bulkPayouts.template, {});
+  const validate = useAction(api.bulkPayouts.validate);
+  const submit = useAction(api.bulkPayouts.submit);
+  const sensitive = useSensitive();
+  const [name, setName] = useState("");
+  const [csv, setCsv] = useState("");
+  const [check, setCheck] = useState<{ valid: boolean; rows: number; errors: { line: number; message: string }[]; totals: string[] } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function onFile(f: File | undefined) {
+    if (!f) return;
+    if (f.size > 2_000_000) return toast.error("The file is larger than 2 MB.");
+    const text = await f.text();
+    setCsv(text);
+    if (!name) setName(f.name.replace(/\.csv$/i, ""));
+    setBusy(true);
+    try {
+      setCheck(await validate({ csv: text }));
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function send() {
+    setBusy(true);
+    try {
+      const r = await sensitive(() => submit({ csv, name }));
+      toast.success(r.status === "pending_approval" ? `${r.count} payouts sent for approval.` : `${r.count} payouts are being sent.`);
+      onClose();
+    } catch (err) {
+      if (!isStepUpError(err)) toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+  const templateHref = template ? `data:text/csv;charset=utf-8,${encodeURIComponent(template)}` : undefined;
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Bulk payout</DialogTitle>
+          <DialogDescription>
+            Upload a CSV with one payout per row. Every row is checked first; nothing is created unless the whole file is valid.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          {templateHref && (
+            <a className="text-sm text-primary underline underline-offset-4" href={templateHref} download="usopgrid-bulk-payout-template.csv">Download the template</a>
+          )}
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="bp-name">Batch name</label>
+            <Input id="bp-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="October salaries" />
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="bp-file">CSV file</label>
+            <Input id="bp-file" type="file" accept=".csv,text/csv" onChange={(e) => void onFile(e.target.files?.[0])} />
+          </div>
+          {check && (
+            check.valid ? (
+              <p className="rounded-md bg-status-success-bg px-3 py-2 text-sm text-status-success">{check.rows} payouts ready · {check.totals.join(" + ")}</p>
+            ) : (
+              <div className="max-h-48 overflow-y-auto rounded-md bg-status-failed-bg px-3 py-2 text-sm text-status-failed">
+                <p className="font-medium">Fix these rows and upload again:</p>
+                <ul className="mt-1 list-disc pl-5">{check.errors.map((e) => <li key={e.line}>Line {e.line}: {e.message}</li>)}</ul>
+              </div>
+            )
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => void send()} disabled={busy || !check?.valid}>{busy && <Loader2 className="mr-2 size-4 animate-spin" />}Submit {check?.valid ? `${check.rows} payouts` : ""}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

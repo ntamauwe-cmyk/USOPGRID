@@ -31,6 +31,8 @@ import { sha256Hex } from "./lib/crypto";
 import { seal, open as openSealed, keyringConfigured } from "./lib/keyring";
 import { isSupportedCurrency } from "../lib/money";
 import { withIdempotency, fingerprint } from "./lib/idempotency";
+import { payoutNeedsApproval, type ApprovalPolicy } from "./lib/approvals";
+import { formatMoney } from "../lib/money";
 
 export const PAYOUT_FEE_BPS = 20; // 0.2% payout fee, integer math
 export const PAYOUT_MINOR_FEE_CAP = 100_000; // cap: 1,000.00 major units
@@ -201,7 +203,7 @@ export const createDashboardPayout = action({
     narration: v.optional(v.string()),
     simulate: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ payoutId: string; status: string }> => {
+  handler: async (ctx, args): Promise<{ payoutId: string; status: string; approvalId?: string }> => {
     const oc = await requireOrgMemberAction(ctx);
     if (!oc.permissions.has(PERMISSIONS.PAYMENTS_CREATE)) {
       throw new ConvexError("FORBIDDEN: missing permission 'payments:create'");
@@ -214,6 +216,16 @@ export const createDashboardPayout = action({
     if (!beneficiary || beneficiary.orgId !== oc.orgId) {
       throw new ConvexError("NOT_FOUND: beneficiary does not belong to this organization");
     }
+    const gate = await approvalGate(ctx, {
+      orgId: oc.orgId,
+      beneficiary,
+      amountMinor: args.amountMinor,
+      narration: args.narration,
+      simulate: args.simulate,
+      requestedBy: `user:${oc.userId}`,
+      requestedByUserId: oc.userId,
+    });
+    if (gate) return { payoutId: "", status: "PENDING_APPROVAL", approvalId: gate };
     const result = await ctx.runAction(internal.payouts.payoutInternal, {
       orgId: oc.orgId,
       beneficiaryId: args.beneficiaryId,
@@ -228,6 +240,44 @@ export const createDashboardPayout = action({
     return { payoutId: result.payoutId!, status: result.status! };
   },
 });
+
+/**
+ * Two-person approval gate. Returns an approval request id when the payout
+ * must wait for a second approver, or null to proceed now.
+ */
+export async function approvalGate(
+  ctx: ActionCtx,
+  a: {
+    orgId: Id<"organizations">;
+    beneficiary: Doc<"beneficiaries">;
+    amountMinor: number;
+    narration?: string;
+    simulate?: string;
+    requestedBy: string;
+    requestedByUserId?: Id<"users">;
+    requestedByLabel?: string;
+    idempotencyKey?: string;
+  },
+): Promise<string | null> {
+  const policy: ApprovalPolicy = await ctx.runQuery(internal.approvals.orgPolicyInternal, { orgId: a.orgId });
+  if (policy.payouts === "off") return null;
+  const usd: number | null = await ctx.runQuery(internal.fxrates.usdEquivalentInternal, { amountMinor: a.amountMinor, currency: a.beneficiary.currency });
+  if (!payoutNeedsApproval(policy, usd)) return null;
+  if (!Number.isSafeInteger(a.amountMinor) || a.amountMinor <= 0) throw new ConvexError("VALIDATION_ERROR: amount must be a positive integer of minor units");
+  const r: { approvalId: Id<"approvalRequests"> } = await ctx.runMutation(internal.approvals.createRequestInternal, {
+    orgId: a.orgId,
+    kind: "payout",
+    summary: `Pay ${formatMoney(a.amountMinor, a.beneficiary.currency)} to ${a.beneficiary.name} (${a.beneficiary.bankName} ${a.beneficiary.accountMasked})${a.narration ? `: ${a.narration}` : ""}`,
+    amountMinor: a.amountMinor,
+    currency: a.beneficiary.currency,
+    payload: { beneficiaryId: a.beneficiary._id, amountMinor: a.amountMinor, narration: a.narration, simulate: a.simulate },
+    requestedBy: a.requestedBy,
+    requestedByUserId: a.requestedByUserId,
+    requestedByLabel: a.requestedByLabel,
+    idempotencyKey: a.idempotencyKey,
+  });
+  return r.approvalId;
+}
 
 export const beneficiaryByIdInternal = internalQuery({
   args: { beneficiaryId: v.id("beneficiaries") },

@@ -107,7 +107,7 @@ export function buildOpenApiSpec(serverUrl: string) {
       "/balance": { get: { tags: ["Balances & settlements"], operationId: "getBalance", summary: "Merchant balances from the ledger", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/settlements": { get: { tags: ["Balances & settlements"], operationId: "listSettlements", summary: "Settlement batches", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/payouts": {
-        post: { tags: ["Payouts"], operationId: "createPayout", summary: "Pay out to a verified beneficiary", parameters: [idem], responses: { "201": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Payouts"], operationId: "createPayout", summary: "Pay out to a verified beneficiary", description: "When the organization's two-person approval policy applies, no money moves: the response is 202 with an approval id, and the payout runs once a second team member approves it in the dashboard.", parameters: [idem], responses: { "201": ok({ type: "object" }), "202": ok({ type: "object" }), ...errors } },
         get: { tags: ["Payouts"], operationId: "listPayouts", summary: "List payouts", responses: { "200": ok({ type: "object" }), ...errors } },
       },
       "/customers": { get: { tags: ["Customers"], operationId: "listCustomers", summary: "Customers built from payment activity", responses: { "200": ok({ type: "object" }), ...errors } } },

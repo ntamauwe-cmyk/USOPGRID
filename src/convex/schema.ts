@@ -114,6 +114,13 @@ export const organizations = defineTable({
       ipAllowlist: v.optional(v.array(v.string())),
     }),
   ),
+  /** Two-person approval policy (see lib/approvals.ts). */
+  approvals: v.optional(
+    v.object({
+      payouts: v.union(v.literal("off"), v.literal("all"), v.literal("above")),
+      payoutThresholdUsd: v.optional(v.number()),
+    }),
+  ),
   /** Per-transaction ceiling in USD-equivalent minor units, enforced before routing. */
   maxTransactionMinor: v.optional(v.number()),
   createdByUserId: v.optional(v.id("users")),
@@ -893,6 +900,78 @@ export const orgInvitations = defineTable({
   .index("by_org", ["orgId"]);
 
 // Enterprise sales enquiries from the public website.
+// Bulk payouts: one uploaded file, many payouts.
+export const payoutBatches = defineTable({
+  orgId: v.id("organizations"),
+  name: v.string(),
+  status: v.union(v.literal("pending_approval"), v.literal("processing"), v.literal("completed"), v.literal("cancelled")),
+  count: v.number(),
+  totals: v.any(),
+  createdByUserId: v.id("users"),
+  createdByLabel: v.string(),
+  approvalId: v.optional(v.id("approvalRequests")),
+  submitted: v.optional(v.number()),
+  refused: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+}).index("by_org_created", ["orgId", "createdAt"]);
+
+export const payoutBatchItems = defineTable({
+  batchId: v.id("payoutBatches"),
+  orgId: v.id("organizations"),
+  line: v.number(),
+  beneficiaryId: v.id("beneficiaries"),
+  beneficiaryName: v.string(),
+  accountMasked: v.string(),
+  amountMinor: v.number(),
+  currency: v.string(),
+  narration: v.optional(v.string()),
+  reference: v.optional(v.string()),
+  status: v.union(v.literal("queued"), v.literal("submitted"), v.literal("refused"), v.literal("cancelled")),
+  payoutId: v.optional(v.string()),
+  payoutStatus: v.optional(v.string()),
+  error: v.optional(v.string()),
+})
+  .index("by_batch_line", ["batchId", "line"])
+  .index("by_batch_status", ["batchId", "status"]);
+
+// Two-person approval requests (maker-checker).
+export const approvalRequests = defineTable({
+  orgId: v.id("organizations"),
+  kind: v.union(v.literal("payout"), v.literal("bulk_payout"), v.literal("policy_change")),
+  status: v.union(
+    v.literal("pending"),
+    v.literal("approved"),
+    v.literal("rejected"),
+    v.literal("cancelled"),
+    v.literal("expired"),
+    v.literal("executed"),
+    v.literal("failed"),
+  ),
+  summary: v.string(),
+  amountMinor: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  /** Validated arguments to execute on approval. */
+  payload: v.any(),
+  /** "user:<id>" or "api:<key prefix>". */
+  requestedBy: v.string(),
+  requestedByUserId: v.optional(v.id("users")),
+  requestedByLabel: v.string(),
+  requestedAt: v.number(),
+  expiresAt: v.number(),
+  idempotencyKey: v.optional(v.string()),
+  decidedByUserId: v.optional(v.id("users")),
+  decidedByLabel: v.optional(v.string()),
+  decidedAt: v.optional(v.number()),
+  note: v.optional(v.string()),
+  result: v.optional(v.any()),
+  error: v.optional(v.string()),
+})
+  .index("by_org_status", ["orgId", "status", "requestedAt"])
+  .index("by_org_requested", ["orgId", "requestedAt"])
+  .index("by_status_expires", ["status", "expiresAt"])
+  .index("by_org_idem", ["orgId", "idempotencyKey"]);
+
 // Fixed-window counters for unauthenticated endpoints (checkout, webhooks).
 export const rateBuckets = defineTable({
   bucket: v.string(),
@@ -1004,6 +1083,9 @@ const schema = defineSchema(
     orgInvitations,
     contactRequests,
     rateBuckets,
+    approvalRequests,
+    payoutBatches,
+    payoutBatchItems,
   },
   {
     schemaValidation: false,

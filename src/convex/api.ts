@@ -34,6 +34,7 @@ import type { ProcessResult, TransactionSummary } from "./payments";
 import type { RoutingContext } from "./connections";
 import { CURRENCIES, COUNTRIES } from "../lib/geo";
 import { buildOpenApiSpec } from "./lib/openapi";
+import { approvalGate } from "./payouts";
 
 type Handler = (ctx: ActionCtx, request: Request, key: AuthedKey, requestId: string) => Promise<Response>;
 
@@ -475,6 +476,19 @@ export const createPayout = endpoint("POST /payouts", async (ctx, request, key, 
     beneficiary = null;
   }
   if (!beneficiary || beneficiary.orgId !== key.orgId) throw new ApiError("not_found", "Beneficiary not found in this organization.");
+  // Two-person approval: the payout waits for a second team member in the dashboard.
+  const approvalId = await approvalGate(ctx, {
+    orgId: key.orgId as Id<"organizations">,
+    beneficiary,
+    amountMinor: amountMinor as number,
+    narration: optString(body, 140, "narration"),
+    requestedBy: `api:${key.prefix}`,
+    requestedByLabel: `API key ${key.prefix}`,
+    idempotencyKey: request.headers.get("Idempotency-Key") ? `payout_${request.headers.get("Idempotency-Key")}` : undefined,
+  });
+  if (approvalId) {
+    return jsonOk({ payout: null, approval: { id: approvalId, status: "pending_approval", message: "This payout needs a second approver in the USOPGRID dashboard (Approvals) before money moves." } }, 202, requestId);
+  }
   const result = (await ctx.runAction(internal.payouts.payoutInternal, {
     orgId: key.orgId as Id<"organizations">,
     beneficiaryId: beneficiaryId as Id<"beneficiaries">,
