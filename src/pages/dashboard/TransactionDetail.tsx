@@ -257,7 +257,7 @@ export default function TransactionDetail() {
                 <KeyValue label="Compliance">{t.complianceDecision ?? "—"}</KeyValue>
               </div>
               {t.outcomeUnknown && (
-                <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                <p className="mt-4 rounded-md border border-status-pending bg-status-pending-bg p-3 text-sm text-status-pending">
                   The provider did not give a clear answer. USOPGRID is confirming the outcome with {t.provider} and will update this payment automatically. Do not retry it under a new reference.
                 </p>
               )}
@@ -394,7 +394,7 @@ export default function TransactionDetail() {
                             <tr key={e._id}>
                               <td className="py-1 pr-2 text-muted-foreground">{e.accountCode}</td>
                               <td className="py-1 pr-2">
-                                <span className={e.direction === "debit" ? "text-chart-4" : "text-chart-2"}>
+                                <span className={e.direction === "debit" ? "text-heading" : "text-gold-ink"}>
                                   {e.direction}
                                 </span>
                               </td>

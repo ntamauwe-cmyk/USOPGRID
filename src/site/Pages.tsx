@@ -32,7 +32,7 @@ export function Platform() {
   return (
     <SiteLayout>
       <PageHead title="One platform from API call to reconciled ledger" lede="USOPGRID sits between your business and every payment provider you use. These are the layers each payment passes through.">
-        <Link to="/developers" className="ug-btn ug-btn-signal">Read the API Documentation</Link>
+        <Link to="/developers" className="ug-btn ug-btn-gold">Read the API Documentation</Link>
         <Link to="/contact" className="ug-btn ug-btn-ghost">Contact Enterprise Sales</Link>
       </PageHead>
       <section className="ug-section">
@@ -98,8 +98,8 @@ export function Orchestration() {
       <section className="ug-section ug-dark">
         <div className="ug-wrap">
           <div className="ug-sec-head"><h2 className="ug-h2">When to fail over, and when never to</h2></div>
-          <table className="ug-table" style={{ color: "#fff" }}>
-            <thead><tr><th scope="col" style={{ color: "var(--on-dark-2)", borderColor: "#fff" }}>Provider answer</th><th scope="col" style={{ color: "var(--on-dark-2)", borderColor: "#fff" }}>What USOPGRID does</th></tr></thead>
+          <table className="ug-table" style={{ color: "var(--ivory)" }}>
+            <thead><tr><th scope="col" style={{ color: "var(--on-dark-2)", borderColor: "var(--gold)" }}>Provider answer</th><th scope="col" style={{ color: "var(--on-dark-2)", borderColor: "var(--gold)" }}>What USOPGRID does</th></tr></thead>
             <tbody>
               {[
                 ["Success, pending or customer action", "Stops. The payment is moving; pending outcomes are confirmed by webhook or status lookup."],
@@ -107,7 +107,7 @@ export function Orchestration() {
                 ["Refused before processing (auth error, validation, rate limit, open circuit)", "Moves to the next provider in the chain with a new provider-side idempotency key."],
                 ["Timeout, network error or 5xx", "Never fails over. The first provider may have charged the customer. The payment stays pending and the recovery queue asks that same provider for the outcome on a backoff schedule up to 72 hours, then escalates to finance."],
               ].map(([a, b]) => (
-                <tr key={a}><td style={{ color: "#fff", borderColor: "var(--line-dark)" }}><span className="cap" style={{ fontSize: "1rem" }}>{a}</span></td><td style={{ color: "var(--on-dark)", borderColor: "var(--line-dark)" }}>{b}</td></tr>
+                <tr key={a}><td style={{ color: "var(--ivory)", borderColor: "var(--line-dark)" }}><span className="cap" style={{ fontSize: "1rem" }}>{a}</span></td><td style={{ color: "var(--on-dark)", borderColor: "var(--line-dark)" }}>{b}</td></tr>
               ))}
             </tbody>
           </table>
@@ -210,7 +210,7 @@ export function Enterprise() {
   return (
     <SiteLayout>
       <PageHead title="Built for the teams that run payments" lede="Engineering, finance, operations and compliance work in one system with the access each role needs and an audit trail of everything they change.">
-        <Link to="/contact" className="ug-btn ug-btn-signal">Contact Enterprise Sales</Link>
+        <Link to="/contact" className="ug-btn ug-btn-gold">Contact Enterprise Sales</Link>
       </PageHead>
       <section className="ug-section">
         <div className="ug-wrap">

@@ -276,7 +276,7 @@ export default function Developers() {
                         variant="outline"
                         className={
                           k.environment === "production"
-                            ? "border-chart-2 text-chart-2"
+                            ? "border-primary text-primary"
                             : "text-muted-foreground"
                         }
                       >
@@ -291,7 +291,7 @@ export default function Developers() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "never"}
-                      {k.expiresAt && <div className="text-xs text-amber-700">Rotated; stops working {new Date(k.expiresAt).toLocaleString()}</div>}
+                      {k.expiresAt && <div className="text-xs text-status-pending">Rotated; stops working {new Date(k.expiresAt).toLocaleString()}</div>}
                     </TableCell>
                     <TableCell className="text-right">
                       {k.status === "active" && !k.expiresAt && (

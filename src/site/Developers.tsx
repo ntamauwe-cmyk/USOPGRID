@@ -72,7 +72,7 @@ export default function Developers() {
           <h1 className="ug-h1">Developer documentation</h1>
           <p className="ug-lede">Everything needed to take a first sandbox payment in minutes and run production traffic safely.</p>
           <div className="ug-actions" style={{ marginTop: 28 }}>
-            <Link to="/auth" className="ug-btn ug-btn-signal">Get sandbox keys</Link>
+            <Link to="/auth" className="ug-btn ug-btn-gold">Get sandbox keys</Link>
             <a href="#api-reference" className="ug-btn ug-btn-ghost">API reference</a>
           </div>
         </div>

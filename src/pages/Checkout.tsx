@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { formatMoney } from "@/lib/money";
 import { Loader2, CheckCircle2, CircleAlert, ShieldCheck } from "lucide-react";
-import { UsopgridMark } from "@/components/brand";
+import { UsopgridLogo } from "@/components/brand";
 import { decimalToMinor } from "@/lib/money";
 
 const API_BASE = ((import.meta.env.VITE_CONVEX_URL as string | undefined) ?? "").replace(/\.cloud$/, ".site");
@@ -145,16 +145,15 @@ export default function Checkout() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#080A24] px-4 py-10">
+    <div className="flex min-h-screen flex-col items-center bg-background px-4 pb-10">
       <div className="w-full max-w-md">
-        <div className="mb-6 flex items-center justify-center gap-2.5 text-zinc-300">
-          <UsopgridMark tone="onDark" className="size-7" />
-          <span className="text-xs font-bold uppercase tracking-[0.22em]">USOPGRID</span>
+        <div className="-mx-4 mb-8 flex items-center justify-center border-b-2 border-gold bg-navy px-4 py-4 sm:mx-0 sm:rounded-b-md">
+          <UsopgridLogo tone="onDark" markClassName="size-7" wordClassName="text-[17px]" />
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-6 backdrop-blur">
+        <div className="rounded-md border bg-card p-6 sm:p-7">
           {loadState === "loading" && (
-            <div className="flex flex-col items-center py-12 text-zinc-400">
+            <div className="flex flex-col items-center py-12 text-muted-foreground">
               <Loader2 className="size-6 animate-spin" />
               <p className="mt-3 text-sm">Loading payment link…</p>
             </div>
@@ -162,10 +161,10 @@ export default function Checkout() {
 
           {loadState === "error" && (
             <div className="flex flex-col items-center py-12 text-center">
-              <CircleAlert className="size-8 text-red-400" />
-              <p className="mt-3 text-sm font-medium text-zinc-200">Link unavailable</p>
-              <p className="mt-1 text-sm text-zinc-500">{loadError}</p>
-              <a href="/" className="mt-4 text-xs text-zinc-400 underline-offset-2 hover:underline">
+              <CircleAlert className="size-8 text-status-failed" />
+              <p className="mt-3 text-sm font-medium text-heading">Link unavailable</p>
+              <p className="mt-1 text-sm text-muted-foreground">{loadError}</p>
+              <a href="/" className="mt-4 text-xs text-muted-foreground underline-offset-2 hover:underline">
                 Powered by USOPGRID
               </a>
             </div>
@@ -173,14 +172,14 @@ export default function Checkout() {
 
           {loadState === "ready" && link && (
             <>
-              <div className="mb-1 text-xs uppercase tracking-wider text-zinc-500">
+              <div className="mb-1 text-[11px] font-medium uppercase tracking-[0.14em] text-gold-ink">
                 {link.merchantName}
               </div>
-              <h1 className="text-lg font-semibold text-zinc-100">{link.title}</h1>
+              <h1 className="text-xl">{link.title}</h1>
               {link.description && (
-                <p className="mt-1 text-sm text-zinc-400">{link.description}</p>
+                <p className="mt-1 text-sm text-muted-foreground">{link.description}</p>
               )}
-              <p className="mt-3 text-3xl font-bold tabular-nums text-white">
+              <p className="mt-4 border-t pt-4 font-display text-3xl font-semibold tabular-nums text-heading">
                 {link.amountMinor != null
                   ? formatMoney(link.amountMinor, link.currency)
                   : `Open amount · ${link.currency}`}
@@ -189,23 +188,23 @@ export default function Checkout() {
               {result ? (
                 <div className="mt-6">
                   {result.ok ? (
-                    <div className="flex flex-col items-center rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-6 text-center">
-                      <CheckCircle2 className="size-10 text-emerald-400" />
-                      <p className="mt-3 font-semibold text-emerald-200">Payment successful</p>
-                      <p className="mt-1 text-sm text-emerald-200/70">
+                    <div className="flex flex-col items-center rounded-md border border-status-success/30 bg-status-success-bg p-6 text-center">
+                      <CheckCircle2 className="size-10 text-status-success" />
+                      <p className="mt-3 font-semibold text-status-success">Payment successful</p>
+                      <p className="mt-1 text-sm text-status-success">
                         {result.payment?.id && <>Reference {result.payment.id} · </>}
                         {formatMoney(result.payment?.amount ?? 0, result.payment?.currency ?? link.currency)}
                       </p>
                     </div>
                   ) : (
-                    <div className="flex flex-col items-center rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-center">
-                      <CircleAlert className="size-10 text-red-400" />
-                      <p className="mt-3 font-semibold text-red-200">Payment failed</p>
-                      <p className="mt-1 text-sm text-red-200/70">{result.message}</p>
+                    <div className="flex flex-col items-center rounded-md border border-status-failed/30 bg-status-failed-bg p-6 text-center">
+                      <CircleAlert className="size-10 text-status-failed" />
+                      <p className="mt-3 font-semibold text-status-failed">Payment failed</p>
+                      <p className="mt-1 text-sm text-status-failed">{result.message}</p>
                       <Button
                         variant="outline"
                         size="sm"
-                        className="mt-4 border-white/20 bg-transparent text-white hover:bg-white/10"
+                        className="mt-4"
                         onClick={() => setResult(null)}
                       >
                         Try again
@@ -217,40 +216,40 @@ export default function Checkout() {
                 <div className="mt-6 space-y-4">
                   {link.amountMinor == null && (
                     <div className="space-y-1.5">
-                      <Label htmlFor="co-amount" className="text-zinc-300">Amount</Label>
+                      <Label htmlFor="co-amount" >Amount</Label>
                       <Input
                         id="co-amount"
                         value={amount}
                         onChange={(e) => setAmount(e.target.value)}
                         placeholder="2500.00"
                         inputMode="decimal"
-                        className="border-white/15 bg-white/5 text-zinc-100 placeholder:text-zinc-600"
+                        
                       />
                     </div>
                   )}
                   <div className="space-y-1.5">
-                    <Label htmlFor="co-email" className="text-zinc-300">Email</Label>
+                    <Label htmlFor="co-email" >Email</Label>
                     <Input
                       id="co-email"
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
                       placeholder="you@example.com"
-                      className="border-white/15 bg-white/5 text-zinc-100 placeholder:text-zinc-600"
+                      
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="co-name" className="text-zinc-300">Name (optional)</Label>
+                    <Label htmlFor="co-name" >Name (optional)</Label>
                     <Input
                       id="co-name"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="Your name"
-                      className="border-white/15 bg-white/5 text-zinc-100 placeholder:text-zinc-600"
+                      
                     />
                   </div>
                   <div className="space-y-1.5">
-                    <Label className="text-zinc-300">Payment method</Label>
+                    <Label >Payment method</Label>
                     <div className="grid grid-cols-2 gap-2">
                       {[["card", "Card"], ["bank_transfer", "Bank transfer"], ["ussd", "USSD"], ["mobile_money", "Mobile money"]].map(
                         ([value, label]) => (
@@ -258,10 +257,10 @@ export default function Checkout() {
                             key={value}
                             type="button"
                             onClick={() => setMethod(value)}
-                            className={`rounded-lg border px-3 py-2 text-sm transition-colors ${
+                            className={`rounded-md border px-3 py-2 text-sm transition-colors ${
                               method === value
-                                ? "border-violet-400/60 bg-violet-500/15 text-violet-200"
-                                : "border-white/10 bg-white/5 text-zinc-400 hover:border-white/20"
+                                ? "border-primary bg-accent font-medium text-primary"
+                                : "border-border bg-card text-muted-foreground hover:border-primary/40"
                             }`}
                           >
                             {label}
@@ -271,14 +270,14 @@ export default function Checkout() {
                     </div>
                   </div>
                   <Button
-                    className="w-full bg-white text-zinc-900 hover:bg-zinc-200"
+                    className="h-11 w-full text-[15px]"
                     onClick={handlePay}
                     disabled={paying || link.status !== "active" || link.expired || link.usesExhausted}
                   >
                     {paying ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
                     Pay {link.amountMinor != null ? formatMoney(link.amountMinor, link.currency) : ""}
                   </Button>
-                  <p className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500">
+                  <p className="flex items-center justify-center gap-1.5 text-[11px] text-muted-foreground">
                     <ShieldCheck className="size-3.5" /> {link.environment === "production" ? "Secured by USOPGRID. Card details are handled by the payment provider." : "Secured by USOPGRID. Test environment: no real money moves."}
                   </p>
                 </div>
@@ -287,7 +286,7 @@ export default function Checkout() {
           )}
         </div>
 
-        <p className="mt-6 text-center text-[11px] text-zinc-600">
+        <p className="mt-6 text-center text-[11px] text-muted-foreground">
           <a href="/" className="underline-offset-2 hover:underline">Payment infrastructure by USOPGRID</a>
         </p>
       </div>

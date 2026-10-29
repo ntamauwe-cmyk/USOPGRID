@@ -284,12 +284,6 @@ export default function Overview() {
               {stats && stats.series.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={stats.series} margin={{ top: 5, right: 8, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="vol" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.35} />
-                        <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0.02} />
-                      </linearGradient>
-                    </defs>
                     <CartesianGrid strokeDasharray="3 3" className="stroke-border" vertical={false} />
                     <XAxis
                       dataKey="day"
@@ -317,7 +311,8 @@ export default function Overview() {
                       dataKey="volume"
                       stroke="var(--chart-1)"
                       strokeWidth={2}
-                      fill="url(#vol)"
+                      fill="var(--chart-1)"
+                      fillOpacity={0.08}
                     />
                   </AreaChart>
                 </ResponsiveContainer>

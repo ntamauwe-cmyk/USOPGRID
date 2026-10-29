@@ -115,10 +115,10 @@ export default function Security() {
             <h2 id="mfa-h" className="text-lg font-semibold">Multi-factor authentication</h2>
             <p className="text-sm text-muted-foreground">With MFA on, sensitive changes ask for a code from your authenticator app.</p>
           </div>
-          {status.mfaEnabled && <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700"><ShieldCheck className="size-4" /> On</span>}
+          {status.mfaEnabled && <span className="inline-flex items-center gap-1 text-sm font-medium text-status-success"><ShieldCheck className="size-4" /> On</span>}
         </div>
         {!status.encryptionConfigured ? (
-          <p className="text-sm text-amber-800">MFA is unavailable until the platform encryption key is configured. Contact your administrator.</p>
+          <p className="text-sm text-status-pending">MFA is unavailable until the platform encryption key is configured. Contact your administrator.</p>
         ) : status.mfaEnabled ? (
           <div className="flex flex-wrap items-center gap-3">
             <span className="text-sm text-muted-foreground">{status.recoveryCodesRemaining} recovery codes left.</span>

@@ -1,14 +1,16 @@
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 
-// Status colors: amber = in flight, blue = processing, teal/green = done,
-// red = failed, violet = money returned, orange = needs a human.
-const AMBER = "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300";
-const BLUE = "bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-300";
-const GREEN = "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300";
-const RED = "bg-red-100 text-red-900 dark:bg-red-950 dark:text-red-300";
-const VIOLET = "bg-violet-100 text-violet-900 dark:bg-violet-950 dark:text-violet-300";
-const ORANGE = "bg-orange-100 text-orange-900 dark:bg-orange-950 dark:text-orange-300";
+// Status colours are their own family (see --status-* in index.css), kept
+// apart from brand navy and gold: green = done, orange = in flight,
+// blue = processing, red = failed, violet = money returned, magenta = needs a
+// human. Each pill also carries a dot so status never relies on colour alone.
+const AMBER = "bg-status-pending-bg text-status-pending";
+const BLUE = "bg-status-info-bg text-status-info";
+const GREEN = "bg-status-success-bg text-status-success";
+const RED = "bg-status-failed-bg text-status-failed";
+const VIOLET = "bg-status-returned-bg text-status-returned";
+const ORANGE = "bg-status-attention-bg text-status-attention";
 const MUTED = "bg-muted text-muted-foreground";
 const STATUS_STYLES: Record<string, string> = {
   CREATED: MUTED, VALIDATED: MUTED, ACCEPTED: BLUE, PROCESSING: BLUE, PENDING: AMBER,
@@ -26,11 +28,12 @@ export function StatusPill({ status, className }: { status: string; className?: 
   return (
     <span
       className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide",
+        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-semibold tracking-wide",
         STATUS_STYLES[status] ?? "bg-muted text-muted-foreground",
         className,
       )}
     >
+      <span aria-hidden="true" className="size-1.5 rounded-full bg-current" />
       {status.replace(/_/g, " ")}
     </span>
   );
@@ -48,7 +51,7 @@ export function PageHeader({
   return (
     <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
       <div>
-        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
+        <h1 className="text-[1.75rem] font-semibold leading-tight">{title}</h1>
         {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
       </div>
       {actions}
@@ -110,7 +113,7 @@ export function StatCard({ label, value, hint, tone }: { label: string; value: R
   return (
     <div className="rounded-lg border bg-card p-4">
       <div className="text-xs font-medium text-muted-foreground">{label}</div>
-      <div className={cn("mt-1 font-display text-2xl font-bold tabular-nums", tone === "good" && "text-emerald-700 dark:text-emerald-400", tone === "bad" && "text-red-700 dark:text-red-400", tone === "warn" && "text-amber-700 dark:text-amber-400")}>{value}</div>
+      <div className={cn("mt-1 font-display text-[1.7rem] font-semibold leading-tight tabular-nums", tone === "good" ? "text-status-success" : tone === "bad" ? "text-status-failed" : tone === "warn" ? "text-status-pending" : "text-heading")}>{value}</div>
       {hint && <div className="mt-1 text-xs text-muted-foreground">{hint}</div>}
     </div>
   );

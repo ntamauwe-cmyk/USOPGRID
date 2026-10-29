@@ -71,7 +71,7 @@ export default function Analytics() {
         <LoadingRows rows={6} />
       ) : (
         <>
-          {d.dataFreshness.truncated && <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">This window has more than 20,000 payments; figures use the most recent 20,000. Export from Reports for the full set.</p>}
+          {d.dataFreshness.truncated && <p className="rounded-md border border-status-pending bg-status-pending-bg p-3 text-sm text-status-pending">This window has more than 20,000 payments; figures use the most recent 20,000. Export from Reports for the full set.</p>}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-7">
             <StatCard label="Payments" value={d.overview.totals.payments.toLocaleString()} />
             <StatCard label="Success rate" value={pct(d.overview.totals.successRate)} hint="excludes pending" tone={d.overview.totals.successRate !== null && d.overview.totals.successRate < 0.8 ? "warn" : undefined} />
@@ -95,7 +95,7 @@ export default function Analytics() {
                   <Legend wrapperStyle={{ fontSize: 12 }} />
                   <Bar yAxisId="n" dataKey="payments" name="Payments" fill="var(--chart-1)" radius={[2, 2, 0, 0]} />
                   <Bar yAxisId="n" dataKey="forecast" name="Forecast" fill="var(--chart-5)" fillOpacity={0.45} radius={[2, 2, 0, 0]} />
-                  <Line yAxisId="p" dataKey="successRate" name="Success %" stroke="var(--chart-2)" strokeWidth={2} dot={false} connectNulls />
+                  <Line yAxisId="p" dataKey="successRate" name="Success %" stroke="var(--chart-2)" strokeWidth={2.5} dot={false} connectNulls />
                 </ComposedChart>
               </ResponsiveContainer>
             </div>
@@ -119,7 +119,7 @@ export default function Analytics() {
                         <td className="py-2 pr-3 tabular-nums">{p.attempts}</td>
                         <td className="py-2 pr-3 tabular-nums">{pct(p.successRate)}</td>
                         <td className="py-2 pr-3 tabular-nums">{pct(p.approvalRate)}</td>
-                        <td className={p.providerErrorRate && p.providerErrorRate > 0.05 ? "py-2 pr-3 tabular-nums text-red-700" : "py-2 pr-3 tabular-nums"}>{pct(p.providerErrorRate)}</td>
+                        <td className={p.providerErrorRate && p.providerErrorRate > 0.05 ? "py-2 pr-3 tabular-nums text-status-failed" : "py-2 pr-3 tabular-nums"}>{pct(p.providerErrorRate)}</td>
                         <td className="py-2 pr-3 tabular-nums">{p.latencyP50Ms ?? "—"} / {p.latencyP95Ms ?? "—"} ms</td>
                       </tr>
                     ))}
@@ -198,9 +198,9 @@ export default function Analytics() {
                     <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
                     <Tooltip contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 12 }} />
-                    <Bar dataKey="ok" stackId="a" name="2xx" fill="var(--chart-2)" />
-                    <Bar dataKey="errors4xx" stackId="a" name="4xx" fill="var(--chart-3)" />
-                    <Bar dataKey="errors5xx" stackId="a" name="5xx" fill="var(--chart-4)" />
+                    <Bar dataKey="ok" stackId="a" name="2xx" fill="var(--chart-1)" />
+                    <Bar dataKey="errors4xx" stackId="a" name="4xx" fill="var(--status-pending)" />
+                    <Bar dataKey="errors5xx" stackId="a" name="5xx" fill="var(--status-failed)" />
                   </ComposedChart>
                 </ResponsiveContainer>
               </div>

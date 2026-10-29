@@ -28,6 +28,21 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 }
 
+/** Brand-styled, email-client-safe HTML (tables + inline styles, no images). */
+function otpEmailHtml(app: string, token: string): string {
+  const navy = "#142746", gold = "#C5A15D", ivory = "#F7F5EF", charcoal = "#292D32", muted = "#5C6068";
+  return `<!doctype html><html><body style="margin:0;padding:0;background:${ivory}">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:${ivory};padding:32px 12px"><tr><td align="center">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#ffffff;border:1px solid #D8D5CD">
+<tr><td style="background:${navy};padding:20px 28px;border-bottom:3px solid ${gold};font-family:Georgia,'Times New Roman',serif;font-size:20px;letter-spacing:6px;color:${ivory}">${app.toUpperCase()}</td></tr>
+<tr><td style="padding:32px 28px 8px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:${charcoal}">Your sign-in code is</td></tr>
+<tr><td style="padding:4px 28px 20px;font-family:'Courier New',Courier,monospace;font-size:32px;font-weight:700;letter-spacing:8px;color:${navy}">${token}</td></tr>
+<tr><td style="padding:0 28px 32px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.6;color:${muted}">It expires in 15 minutes. If you did not try to sign in, ignore this email: nobody can sign in without the code. ${app} staff will never ask you for it.</td></tr>
+</table>
+<p style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:${muted};margin:16px 0 0">Powering Every Payment Connection.</p>
+</td></tr></table></body></html>`;
+}
+
 export async function sendOtpEmail(email: string, token: string): Promise<void> {
   const app = APP_NAME();
   const resendKey = process.env.RESEND_API_KEY;
@@ -41,7 +56,7 @@ export async function sendOtpEmail(email: string, token: string): Promise<void> 
         to: [email],
         subject: `${token} is your ${app} sign-in code`,
         text: `Your ${app} sign-in code is ${token}. It expires in 15 minutes.\n\nIf you did not try to sign in, ignore this email; nobody can sign in without the code.`,
-        html: `<p>Your ${escapeHtml(app)} sign-in code is</p><p style="font-size:28px;font-weight:700;letter-spacing:6px;font-family:monospace">${token}</p><p>It expires in 15 minutes. If you did not try to sign in, ignore this email.</p>`,
+        html: otpEmailHtml(escapeHtml(app), token),
       },
     );
     // Never echo provider responses or request config: they can contain credentials.

@@ -359,7 +359,7 @@ export default function Routing() {
                   <tr key={`${d.at}-${d.transactionId}`} className="align-top">
                     <td className="whitespace-nowrap px-4 py-2.5 text-muted-foreground">{new Date(d.at).toLocaleString()}</td>
                     <td className="px-4 py-2.5 font-mono text-xs">{d.transactionId ? <a className="text-primary hover:underline" href={`/dashboard/transactions/${d.transactionId}`}>{d.transactionId}</a> : "—"}</td>
-                    <td className="px-4 py-2.5">{d.chain.join(" → ") || "none"}{d.failovers > 0 && <span className="ml-1 text-xs text-amber-700">({d.failovers} failover)</span>}</td>
+                    <td className="px-4 py-2.5">{d.chain.join(" → ") || "none"}{d.failovers > 0 && <span className="ml-1 text-xs text-status-pending">({d.failovers} failover)</span>}</td>
                     <td className="px-4 py-2.5">{d.outcome ? <StatusPill status={d.outcome} /> : "—"}</td>
                     <td className="max-w-md px-4 py-2.5 text-muted-foreground">{d.explanation}</td>
                   </tr>

@@ -165,7 +165,7 @@ export default function Disputes() {
                             <Button
                               size="sm"
                               variant="ghost"
-                              className="text-emerald-700 hover:text-emerald-800"
+                              className="text-status-success hover:text-status-success"
                               onClick={() =>
                                 resolveDispute({ disputeId: d.disputeId, outcome: "won" })
                                   .then(() => toast.success("Dispute won — no funds moved."))

@@ -1,4 +1,4 @@
-<p><img src="public/wordmark.svg" alt="USOPGRID" height="48"></p>
+<p><img src="public/brand/usopgrid-horizontal-light.svg" alt="USOPGRID" height="48"></p>
 
 # USOPGRID
 
@@ -30,7 +30,7 @@ src/
   site/                     Public website + developer portal (plain CSS, no framework)
   pages/dashboard/          Merchant dashboard (Overview … Providers, Routing, Reconciliation,
                             Analytics, Reports, Organization, Team, Security, Operations)
-  components/brand.tsx      Logo system (mark, lockup, palette)
+  components/brand.tsx      Logo system (emblem, wordmark, lockups, palette); see docs/USOPGRID_BRAND.md
   convex/                   Backend (Convex)
     orchestration/          states · router · engine · circuit · retry · compliance  (pure, tested)
     providers/              adapter contract + 12 adapters                           (pure, tested)
@@ -85,6 +85,7 @@ is strongly recommended. Deployment checklist: `docs/USOPGRID_DEPLOYMENT.md`.
 - [Security](docs/USOPGRID_SECURITY.md)
 - [Deployment](docs/USOPGRID_DEPLOYMENT.md)
 - [Operations runbook](docs/USOPGRID_OPERATIONS.md)
+- [Brand identity](docs/USOPGRID_BRAND.md)
 
 ## Important
 

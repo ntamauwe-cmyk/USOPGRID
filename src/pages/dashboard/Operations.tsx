@@ -36,7 +36,7 @@ function Health() {
       <ul className="divide-y rounded-lg border bg-card">
         {h.checks.map((c) => (
           <li key={c.id} className="flex items-start gap-3 p-3">
-            {c.ok ? <CheckCircle2 className="mt-0.5 size-5 text-emerald-600" aria-label="Healthy" /> : <XCircle className="mt-0.5 size-5 text-red-600" aria-label="Needs attention" />}
+            {c.ok ? <CheckCircle2 className="mt-0.5 size-5 text-status-success" aria-label="Healthy" /> : <XCircle className="mt-0.5 size-5 text-status-failed" aria-label="Needs attention" />}
             <div><div className="text-sm font-medium">{c.label}</div><div className="text-sm text-muted-foreground">{c.detail}</div></div>
           </li>
         ))}
@@ -60,7 +60,7 @@ function Health() {
                 <td className="px-4 py-2.5"><div className="font-medium">{p.name}</div>{p.lastError && <div className="max-w-xs text-xs text-muted-foreground">Last error: {p.lastError}</div>}</td>
                 <td className="px-4 py-2.5 tabular-nums">{p.attemptsToday}</td>
                 <td className="px-4 py-2.5 tabular-nums">{pct(p.successRate)}</td>
-                <td className={p.errorRate && p.errorRate > 0.05 ? "px-4 py-2.5 tabular-nums text-red-700" : "px-4 py-2.5 tabular-nums"}>{pct(p.errorRate)}</td>
+                <td className={p.errorRate && p.errorRate > 0.05 ? "px-4 py-2.5 tabular-nums text-status-failed" : "px-4 py-2.5 tabular-nums"}>{pct(p.errorRate)}</td>
                 <td className="px-4 py-2.5 tabular-nums">{p.avgLatencyMs ?? "—"} ms</td>
                 <td className="px-4 py-2.5">
                   {p.circuits.length === 0 ? <span className="text-muted-foreground">—</span> : (
@@ -170,7 +170,7 @@ function ProviderEvents() {
                   <td className="whitespace-nowrap px-4 py-2 text-xs text-muted-foreground">{new Date(e.receivedAt).toLocaleString()}</td>
                   <td className="px-4 py-2">{e.providerId}</td>
                   <td className="px-4 py-2 font-mono text-xs">{e.rawType}</td>
-                  <td className="px-4 py-2">{e.verified ? "Yes" : <span className="text-red-700">No</span>}</td>
+                  <td className="px-4 py-2">{e.verified ? "Yes" : <span className="text-status-failed">No</span>}</td>
                   <td className="px-4 py-2">{e.outcome}</td>
                   <td className="max-w-sm px-4 py-2 text-xs text-muted-foreground">{e.detail ?? ""}</td>
                 </tr>
@@ -322,7 +322,7 @@ function Keys() {
               <li key={k} className="font-mono text-xs">{k}: {n} secret{n === 1 ? "" : "s"}{k === report.activeKeyId ? " (active)" : ""}</li>
             ))}
           </ul>
-          <p className={`mt-2 text-xs ${stale ? "text-amber-600" : "text-emerald-600"}`}>
+          <p className={`mt-2 text-xs ${stale ? "text-status-pending" : "text-status-success"}`}>
             {stale ? `${stale} secret(s) still on an older key. Keep that key configured until this reaches zero.` : "Everything is on the active key. Older keys can be removed."}
           </p>
         </div>
