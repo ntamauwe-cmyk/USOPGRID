@@ -6,7 +6,8 @@ import { ConvexError } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
-import { requireOrgMember, requireOrgMemberAction } from "./lib/rbac";
+import { requireOrgMember, requireOrgMemberAction, requireSensitive } from "./lib/rbac";
+import { normaliseRules } from "./lib/ipallow";
 import { PERMISSIONS } from "./schema";
 import { generateApiKey, hashApiKey } from "./lib/apikeys";
 import { randomToken } from "./lib/crypto";
@@ -240,6 +241,8 @@ export const listApiKeys = query({
         mode: k.mode,
         prefix: k.prefix,
         status: k.status,
+        scope: k.scope ?? "full",
+        allowedIps: k.allowedIps ?? [],
         expiresAt: k.expiresAt ?? null,
         lastUsedAt: k.lastUsedAt ?? null,
         createdAt: k.createdAt,
@@ -252,6 +255,8 @@ export const createApiKey = action({
     name: v.string(),
     environment: v.union(v.literal("sandbox"), v.literal("production")),
     mode: v.union(v.literal("secret"), v.literal("publishable")),
+    scope: v.optional(v.union(v.literal("full"), v.literal("read_only"))),
+    allowedIps: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args): Promise<{ keyId: string; fullKey: string; prefix: string }> => {
     const oc = await requireOrgMemberAction(ctx);
@@ -259,6 +264,12 @@ export const createApiKey = action({
       throw new ConvexError("FORBIDDEN: missing permission 'keys:manage'");
     }
     await ctx.runQuery(api.providers.assertSensitive, { permission: PERMISSIONS.KEYS_MANAGE });
+    let allowedIps: string[] = [];
+    try {
+      allowedIps = normaliseRules(args.allowedIps ?? []);
+    } catch (err) {
+      throw new ConvexError(err instanceof Error ? err.message : "Invalid IP allowlist");
+    }
     const { full, prefix } = generateApiKey(args.environment, args.mode);
     const hash = await hashApiKey(full);
     const keyId = await ctx.runMutation(internal.servicesInternal.insertApiKeyInternal, {
@@ -269,6 +280,8 @@ export const createApiKey = action({
       prefix,
       hash,
       userId: oc.userId,
+      scope: args.scope ?? "full",
+      allowedIps,
     });
     await audit(ctx, {
       orgId: oc.orgId,
@@ -276,7 +289,7 @@ export const createApiKey = action({
       action: "key.created",
       resource: "apiKey",
       resourceId: keyId,
-      after: { name: args.name, environment: args.environment, mode: args.mode, prefix },
+      after: { name: args.name, environment: args.environment, mode: args.mode, prefix, scope: args.scope ?? "full", allowedIps },
     });
     return { keyId, fullKey: full, prefix };
   },
@@ -444,6 +457,36 @@ export const listAuditLogs = query({
  * keep the old key working for a grace period (default 24 h) so deployments
  * can roll over without downtime. The old key is then refused automatically.
  */
+/** Change a key's scope or IP allowlist (step-up when MFA is on or required). */
+export const setApiKeyRestrictions = mutation({
+  args: {
+    keyId: v.id("apiKeys"),
+    scope: v.union(v.literal("full"), v.literal("read_only")),
+    allowedIps: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const oc = await requireSensitive(ctx, PERMISSIONS.KEYS_MANAGE);
+    const key = await ctx.db.get(args.keyId);
+    if (!key || key.orgId !== oc.orgId || key.status !== "active") throw new ConvexError("NOT_FOUND: active key");
+    let allowedIps: string[];
+    try {
+      allowedIps = normaliseRules(args.allowedIps);
+    } catch (err) {
+      throw new ConvexError(err instanceof Error ? err.message : "Invalid IP allowlist");
+    }
+    await ctx.db.patch(args.keyId, { scope: args.scope, allowedIps });
+    await logAudit(ctx, {
+      orgId: oc.orgId,
+      actor: oc.userId,
+      action: "key.restrictions_changed",
+      resource: "apiKey",
+      resourceId: args.keyId,
+      before: { scope: key.scope ?? "full", allowedIps: key.allowedIps ?? [] },
+      after: { scope: args.scope, allowedIps },
+    });
+  },
+});
+
 export const rotateApiKey = action({
   args: { keyId: v.id("apiKeys"), graceHours: v.optional(v.number()) },
   handler: async (ctx, args): Promise<{ keyId: string; fullKey: string; prefix: string; oldKeyExpiresAt: number }> => {
@@ -462,6 +505,9 @@ export const rotateApiKey = action({
       prefix,
       hash,
       userId: oc.userId,
+      // The replacement keeps the same restrictions.
+      scope: old.scope ?? "full",
+      allowedIps: old.allowedIps ?? [],
     });
     const grace = Math.min(Math.max(args.graceHours ?? 24, 0), 168);
     const oldKeyExpiresAt = Date.now() + grace * 3_600_000;

@@ -34,7 +34,8 @@ import {
 import { PageHeader, EmptyState, errorMessage } from "@/components/kit";
 import { useSensitive } from "@/components/StepUp";
 import { apiBaseUrl } from "@/site/routes";
-import { KeyRound, Plus, Copy, Ban, Loader2, Terminal, Check, RotateCw } from "lucide-react";
+import { KeyRound, Plus, Copy, Ban, Loader2, Terminal, Check, RotateCw, ShieldCheck } from "lucide-react";
+import type { Id } from "@/convex/_generated/dataModel";
 import { toast } from "sonner";
 
 // Convex HTTP surface host derived from VITE_CONVEX_URL (.cloud → .site).
@@ -93,6 +94,8 @@ export default function Developers() {
   const [keyName, setKeyName] = useState("");
   const [keyEnv, setKeyEnv] = useState<"sandbox" | "production">("sandbox");
   const [keyMode, setKeyMode] = useState<"secret" | "publishable">("secret");
+  const [keyScope, setKeyScope] = useState<"full" | "read_only">("full");
+  const [restricting, setRestricting] = useState<{ _id: Id<"apiKeys">; name: string; scope: "full" | "read_only"; allowedIps: string[] } | null>(null);
   const [creating, setCreating] = useState(false);
   const [newKey, setNewKey] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -107,6 +110,7 @@ export default function Developers() {
         name: keyName.trim() || "Default key",
         environment: keyEnv,
         mode: keyMode,
+        scope: keyScope,
       }));
       setNewKey(r.fullKey);
       setKeyName("");
@@ -223,6 +227,16 @@ export default function Developers() {
                         </Select>
                       </div>
                     </div>
+                    <div className="space-y-1.5">
+                      <label className="text-sm font-medium">Access</label>
+                      <Select value={keyScope} onValueChange={(v) => setKeyScope(v as typeof keyScope)}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="full">Full access</SelectItem>
+                          <SelectItem value="read_only">Read-only (reporting, reconciliation tools)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <DialogFooter>
                     <Button onClick={handleCreate} disabled={creating}>
@@ -254,6 +268,7 @@ export default function Developers() {
                   <TableHead>Key</TableHead>
                   <TableHead>Environment</TableHead>
                   <TableHead>Status</TableHead>
+                  <TableHead>Restrictions</TableHead>
                   <TableHead>Last used</TableHead>
                   <TableHead />
                 </TableRow>
@@ -289,11 +304,20 @@ export default function Developers() {
                         {k.status}
                       </span>
                     </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">
+                      <div className={k.scope === "read_only" ? "font-medium text-heading" : ""}>{k.scope === "read_only" ? "Read-only" : "Full access"}</div>
+                      <div>{k.allowedIps.length === 0 ? "Any IP address" : k.allowedIps.length === 1 ? k.allowedIps[0] : `${k.allowedIps.length} IP ranges`}</div>
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "never"}
                       {k.expiresAt && <div className="text-xs text-status-pending">Rotated; stops working {new Date(k.expiresAt).toLocaleString()}</div>}
                     </TableCell>
                     <TableCell className="text-right">
+                      {k.status === "active" && (
+                        <Button size="sm" variant="ghost" onClick={() => setRestricting({ _id: k._id, name: k.name, scope: k.scope, allowedIps: k.allowedIps })}>
+                          <ShieldCheck className="size-3.5" /> Restrict
+                        </Button>
+                      )}
                       {k.status === "active" && !k.expiresAt && (
                         <Button
                           size="sm"
@@ -463,6 +487,67 @@ export default function Developers() {
           </Table>
         </CardContent>
       </Card>
+      {restricting && <RestrictKeyDialog keyInfo={restricting} onClose={() => setRestricting(null)} />}
     </div>
+  );
+}
+
+function RestrictKeyDialog({ keyInfo, onClose }: { keyInfo: { _id: Id<"apiKeys">; name: string; scope: "full" | "read_only"; allowedIps: string[] }; onClose: () => void }) {
+  const setRestrictions = useMutation(api.services.setApiKeyRestrictions);
+  const sensitive = useSensitive();
+  const [scope, setScope] = useState(keyInfo.scope);
+  const [ips, setIps] = useState(keyInfo.allowedIps.join("\n"));
+  const [saving, setSaving] = useState(false);
+  async function save() {
+    setSaving(true);
+    try {
+      await sensitive(() => setRestrictions({ keyId: keyInfo._id, scope, allowedIps: ips.split(/[\s,]+/).filter(Boolean) }));
+      toast.success("Restrictions saved");
+      onClose();
+    } catch (err) {
+      toast.error(errorMessage(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Restrict “{keyInfo.name}”</DialogTitle>
+          <DialogDescription>Limit what this key can do and where it can be used from. Changes apply to the next request.</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="rk-scope">Access</label>
+            <Select value={scope} onValueChange={(v) => setScope(v as typeof scope)}>
+              <SelectTrigger id="rk-scope"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="full">Full access</SelectItem>
+                <SelectItem value="read_only">Read-only: can view, cannot create payments, refunds or payouts</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium" htmlFor="rk-ips">Allowed IP addresses</label>
+            <textarea
+              id="rk-ips"
+              value={ips}
+              onChange={(e) => setIps(e.target.value)}
+              rows={4}
+              placeholder={"203.0.113.7\n198.51.100.0/24\n2001:db8::/48"}
+              className="w-full rounded-md border border-input bg-card px-3 py-2 font-mono text-sm"
+            />
+            <p className="text-xs text-muted-foreground">
+              One address or range per line. Leave empty to allow any address. Check the address USOPGRID sees for your servers with <code className="font-mono">GET /api/v1/whoami</code> before saving, or requests from them will be refused.
+            </p>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={() => void save()} disabled={saving}>{saving && <Loader2 className="mr-2 size-4 animate-spin" />}Save restrictions</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

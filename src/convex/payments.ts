@@ -63,6 +63,8 @@ export const apiKeyByHash = internalQuery({
       merchantId: key.merchantId,
       environment: key.environment,
       mode: key.mode,
+      scope: key.scope,
+      allowedIps: key.allowedIps,
       prefix: key.prefix,
     };
   },

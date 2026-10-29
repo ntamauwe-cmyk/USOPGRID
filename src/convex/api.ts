@@ -44,6 +44,9 @@ function endpoint(routeName: string, fn: Handler) {
     let res: Response;
     try {
       key = await authenticateRequest(ctx, request);
+      if (key.scope === "read_only" && !routeName.startsWith("GET ")) {
+        throw new ApiError("authorization_error", "This API key is read-only. Use a full-access key to create or change data.");
+      }
       res = await fn(ctx, request, key, requestId);
     } catch (err) {
       res = handleApiError(err, requestId);
@@ -555,6 +558,11 @@ export const listCustomers = endpoint("GET /customers", async (ctx, request, key
 // ---------------------------------------------------------------------------
 // Public (unauthenticated) endpoints
 // ---------------------------------------------------------------------------
+/** Who is calling: key prefix, environment, scope and the client address USOPGRID sees (for IP allowlists). */
+export const whoami = endpoint("GET /whoami", async (_ctx, _request, key, requestId) =>
+  jsonOk({ key: key.prefix, environment: key.environment, scope: key.scope, client_ip: key.clientIp }, 200, requestId),
+);
+
 export const health = httpAction(async (_ctx, request) =>
   jsonOk({ service: "usopgrid-api", version: "v1", api_version: API_VERSION, time: new Date().toISOString() }, 200, requestIdFrom(request)),
 );

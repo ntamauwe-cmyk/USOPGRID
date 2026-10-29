@@ -16,7 +16,9 @@ import {
 
 import { useAuth } from "@/hooks/use-auth";
 import { UsopgridLogo, USOPGRID_COMPANY, USOPGRID_DESCRIPTOR, USOPGRID_TAGLINE } from "@/components/brand";
-import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
+import { ArrowRight, Building2, Loader2, Mail, UserX } from "lucide-react";
+import { useQuery } from "convex/react";
+import { api } from "@/convex/_generated/api";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
@@ -46,6 +48,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   const [otp, setOtp] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const signInOptions = useQuery(api.signInOptions.list, {});
 
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
@@ -90,6 +93,18 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       setIsLoading(false);
 
       setOtp("");
+    }
+  };
+
+  const handleSso = async (provider: string) => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      // OAuth/OIDC providers redirect to the identity provider and back.
+      await signIn(provider, { redirectTo: redirect });
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Single sign-on is unavailable. Try email instead.");
+      setIsLoading(false);
     }
   };
 
@@ -182,6 +197,19 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       </div>
                     </div>
                     
+                    {(signInOptions?.sso ?? []).map((p) => (
+                      <Button
+                        key={p.id}
+                        type="button"
+                        variant="outline"
+                        className="w-full mt-4"
+                        disabled={isLoading}
+                        onClick={() => void handleSso(p.id)}
+                      >
+                        <Building2 className="mr-2 h-4 w-4" />
+                        Continue with {p.label}
+                      </Button>
+                    ))}
                     <Button
                       type="button"
                       variant="outline"

@@ -12,6 +12,7 @@ auth.addHttpRoutes(http);
 // ---------------------------------------------------------------------------
 const routes: [string, "GET" | "POST", Parameters<typeof http.route>[0]["handler"], boolean?][] = [
   ["/api/v1/health", "GET", api.health],
+  ["/api/v1/whoami", "GET", api.whoami],
   ["/api/v1/openapi.json", "GET", api.openapi],
   ["/api/v1/reference", "GET", api.referenceData],
   ["/api/v1/payments", "POST", api.createPayment],

@@ -171,6 +171,10 @@ export const apiKeys = defineTable({
   /** Set when the key was rotated: it keeps working until this time. */
   expiresAt: v.optional(v.number()),
   rotatedToKeyId: v.optional(v.string()),
+  /** Least privilege: read_only keys may call GET routes only. Absent = full. */
+  scope: v.optional(v.union(v.literal("full"), v.literal("read_only"))),
+  /** IPv4/IPv6 addresses or CIDR ranges allowed to use this key. Empty = any. */
+  allowedIps: v.optional(v.array(v.string())),
   lastUsedAt: v.optional(v.number()),
   // Per-key rate limiting window
   rateWindowCount: v.optional(v.number()),

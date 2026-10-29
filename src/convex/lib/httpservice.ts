@@ -6,6 +6,7 @@
 import type { ActionCtx } from "../_generated/server";
 import { internal } from "../_generated/api";
 import { sha256Hex, timingSafeEqual } from "./crypto";
+import { ipAllowed } from "./ipallow";
 
 // ---------------------------------------------------------------------------
 // Response envelopes — consistent, predictable
@@ -153,6 +154,21 @@ export async function checkRateLimit(ctx: ActionCtx, apiKeyId: string): Promise<
   }
 }
 
+/**
+ * Client address for security decisions (API key allowlists): the address the
+ * platform's edge proxy appended LAST to X-Forwarded-For. Entries to its left
+ * can be forged by the caller; the last one cannot. Customers can check what
+ * USOPGRID sees with GET /api/v1/whoami before enabling an allowlist.
+ */
+export function trustedClientIp(request: Request): string | null {
+  const h = request.headers;
+  const xff = h.get("x-forwarded-for");
+  const last = xff ? xff.split(",").map((s) => s.trim()).filter(Boolean).pop() : null;
+  const ip = last ?? h.get("x-real-ip") ?? h.get("cf-connecting-ip");
+  const t = ip?.trim();
+  return t && /^[0-9a-fA-F:.]{3,45}$/.test(t) ? t : null;
+}
+
 /** Best-effort client address (used only as one throttling dimension). */
 export function clientIp(request: Request): string | null {
   const h = request.headers;
@@ -187,6 +203,8 @@ export interface AuthedKey {
   environment: "sandbox" | "production";
   mode: "secret" | "publishable";
   prefix: string;
+  scope: "full" | "read_only";
+  clientIp: string | null;
 }
 
 export async function authenticateRequest(
@@ -211,6 +229,10 @@ export async function authenticateRequest(
   }
   // A live secret key sent from a web page is exposed to everyone who loads
   // that page. Browsers attach Origin to cross-origin requests; servers don't.
+  const ip = trustedClientIp(request);
+  if (key.allowedIps && key.allowedIps.length > 0 && !ipAllowed(ip, key.allowedIps)) {
+    throw new ApiError("authorization_error", `This API key is restricted to approved IP addresses and cannot be used from ${ip ?? "an unknown address"}. Update the allowlist in Developers → API keys.`);
+  }
   if (key.environment === "production" && request.headers.get("Origin")) {
     throw new ApiError("authorization_error", "Live secret keys must only be used from your server, never from a browser. Rotate this key if it was embedded in a web page.");
   }
@@ -223,6 +245,8 @@ export async function authenticateRequest(
     environment: key.environment,
     mode: key.mode,
     prefix: key.prefix,
+    scope: key.scope ?? "full",
+    clientIp: ip,
   };
 }
 

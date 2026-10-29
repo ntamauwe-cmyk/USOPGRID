@@ -158,9 +158,9 @@ const members: R<typeof api.orgs.listMembers> = [
 ];
 const invitations: R<typeof api.orgs.listInvitations> = [{ _id: id("orgInvitations", "i1"), email: "ops@kudiretail.ng", role: "operations", expiresAt: NOW + 6 * D, createdAt: NOW - D }];
 const apiKeys: R<typeof api.services.listApiKeys> = [
-  { _id: id("apiKeys", "k1"), name: "Checkout server", environment: "production", mode: "secret", prefix: "sk_live_7Hq2", status: "active", expiresAt: null, lastUsedAt: NOW - 30_000, createdAt: NOW - 40 * D },
-  { _id: id("apiKeys", "k2"), name: "Checkout server (old)", environment: "production", mode: "secret", prefix: "sk_live_Q81z", status: "active", expiresAt: NOW + 20 * H, lastUsedAt: NOW - 2 * H, createdAt: NOW - 120 * D },
-  { _id: id("apiKeys", "k3"), name: "Staging", environment: "sandbox", mode: "secret", prefix: "sk_sandbox_c1Px", status: "active", expiresAt: null, lastUsedAt: NOW - D, createdAt: NOW - 70 * D },
+  { _id: id("apiKeys", "k1"), name: "Checkout server", environment: "production", mode: "secret", prefix: "sk_live_7Hq2", status: "active", scope: "full", allowedIps: ["102.89.40.0/24", "41.58.22.17"], expiresAt: null, lastUsedAt: NOW - 30_000, createdAt: NOW - 40 * D },
+  { _id: id("apiKeys", "k2"), name: "Checkout server (old)", environment: "production", mode: "secret", prefix: "sk_live_Q81z", status: "active", scope: "full", allowedIps: [], expiresAt: NOW + 20 * H, lastUsedAt: NOW - 2 * H, createdAt: NOW - 120 * D },
+  { _id: id("apiKeys", "k3"), name: "Finance reporting", environment: "production", mode: "secret", prefix: "sk_live_r9Dm", status: "active", scope: "read_only", allowedIps: [], expiresAt: null, lastUsedAt: NOW - D, createdAt: NOW - 70 * D },
 ];
 const settlementSummary: R<typeof api.services.getSettlementSummary> = { balances: [{ merchantId: id("merchants", "mer1"), merchantName: "Kudi Retail", currency: "NGN", balanceMinor: 18_442_910_00 }, { merchantId: id("merchants", "mer1"), merchantName: "Kudi Retail", currency: "KES", balanceMinor: 2_104_500_00 }] };
 
@@ -169,6 +169,7 @@ const merchants: R<typeof api.orgs.listMerchants> = [{ _id: id("merchants", "mer
 
 export const FIXTURES: Record<string, unknown> = {
   "orgs:orgProfile": orgProfile,
+  "signInOptions:list": { sso: [{ id: "microsoft-entra-id", label: "Microsoft" }, { id: "google", label: "Google Workspace" }] },
   "orgs:listMerchants": merchants,
   "orgs:getOrgContext": orgContext,
   "users:currentUser": currentUser,

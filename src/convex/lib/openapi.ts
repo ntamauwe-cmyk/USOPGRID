@@ -112,6 +112,7 @@ export function buildOpenApiSpec(serverUrl: string) {
       },
       "/customers": { get: { tags: ["Customers"], operationId: "listCustomers", summary: "Customers built from payment activity", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/reference": { get: { tags: ["Reference"], operationId: "referenceData", security: [], summary: "ISO currencies, countries, methods and states", responses: { "200": ok({ type: "object" }) } } },
+      "/whoami": { get: { tags: ["Reference"], operationId: "whoami", summary: "The calling key's environment, scope and the client IP address USOPGRID sees (use it before enabling an IP allowlist)", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/health": { get: { tags: ["Reference"], operationId: "health", security: [], summary: "Liveness", responses: { "200": ok({ type: "object" }) } } },
     },
     webhooks: {
