@@ -1,0 +1,35 @@
+name: CI
+on:
+  push:
+    branches: [main, "usopgrid/**"]
+  pull_request:
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile || bun install
+      - run: bun test src/tests/
+
+  typecheck-and-build:
+    runs-on: ubuntu-latest
+    env:
+      CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Convex codegen (needs CONVEX_DEPLOY_KEY secret)
+        if: env.CONVEX_DEPLOY_KEY != ''
+        run: npx convex codegen
+      - name: Typecheck + build
+        if: env.CONVEX_DEPLOY_KEY != ''
+        run: npm run build
+        env:
+          VITE_CONVEX_URL: ${{ secrets.VITE_CONVEX_URL }}
+      - run: npm audit --audit-level=high --omit=dev || true

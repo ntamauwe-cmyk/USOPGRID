@@ -7,8 +7,8 @@ import { canonicalize } from "../convex/lib/idempotency";
 
 describe("crypto", () => {
   test("sha256Hex is deterministic and hex", async () => {
-    const a = await sha256Hex("raevolt");
-    const b = await sha256Hex("raevolt");
+    const a = await sha256Hex("usopgrid");
+    const b = await sha256Hex("usopgrid");
     expect(a).toBe(b);
     expect(a).toMatch(/^[0-9a-f]{64}$/);
   });

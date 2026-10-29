@@ -1,9 +1,9 @@
-// RAEVOLT disputes page (prompt §16) — dispute lifecycle: open, submit
+// USOPGRID disputes page — dispute lifecycle: open, submit
 // evidence, resolve. Chargebacks post balanced ledger entries automatically.
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -30,9 +30,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, EmptyState, StatusPill, KeyValue } from "@/components/raevolt";
+import { PageHeader, EmptyState, StatusPill, } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
-import { ShieldAlert, Loader2, Gavel, FileText, ChevronRight } from "lucide-react";
+import { ShieldAlert, Loader2, Gavel, FileText, } from "lucide-react";
 import { toast } from "sonner";
 
 const REASONS = [

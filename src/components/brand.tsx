@@ -1,81 +1,83 @@
 import { useId } from "react";
 import { cn } from "@/lib/utils";
 
-// RAEVOLT brand system — single source of truth for the approved identity.
-// The mark is the geometric R/V monogram: a metallic white R with the
-// electric-violet V integrated at its lower right (per the approved reference).
-// Do not alter the geometry or proportions here; every branded surface
-// renders this component (or the matching /logo.svg asset).
-export const RAEVOLT_TAGLINE = "THE INFRASTRUCTURE BEHIND EVERY PAYMENT.";
+// USOPGRID brand system — single source of truth for the identity.
+//
+// The mark is a routing fork on a grid: an origin node enters the hub and the
+// route splits to two provider nodes (primary + failover). The faint 3×3
+// lattice is the grid every payment connection runs on. Geometry is shared
+// with public/logo.svg and public/favicon.svg — change them together.
 
-// Shared geometry — identical to public/logo.svg and src/assets/logo.svg.
-const R_PATH =
-  "M8 4 H27 C35 4 40 9 40 16 C40 22 36 26.5 30 27.8 L44 44 H32.5 L20.5 28.5 H20 V44 H8 Z M20 11 H26.5 C29.8 11 31.8 12.8 31.8 15.8 C31.8 18.8 29.8 20.6 26.5 20.6 H20 Z M8 36 L20 44 L8 44 Z";
-const V_PATH = "M25 22 L37 44 L48 22 L42.5 22 L37 31 L31.5 22 Z";
+export const USOPGRID_NAME = "USOPGRID";
+export const USOPGRID_TAGLINE = "Powering Every Payment Connection.";
+export const USOPGRID_DESCRIPTOR = "Enterprise Payment Infrastructure";
+export const USOPGRID_COMPANY = "RAE Horizon Technologies Limited";
 
-export function RaevoltMark({
+export const BRAND = {
+  midnight: "#0B1240",
+  ink: "#0E1430",
+  paper: "#FFFFFF",
+  mist: "#F2F4F9",
+  signal: "#12C2B0",
+  electric: "#2D5BFF",
+} as const;
+
+const GRID = [12, 24, 36].flatMap((y) => [12, 24, 36].map((x) => [x, y] as const));
+const ROUTE = "M11 24 H24 V12 H37 M24 24 V36 H37";
+
+export function UsopgridMark({
   className,
-  bare = false,
-  onClick,
+  tone = "tile",
+  title = "USOPGRID",
 }: {
   className?: string;
-  /** Render the monogram alone (dark surfaces only — the R is near-white). */
-  bare?: boolean;
-  onClick?: () => void;
+  /** tile: navy tile (default). onDark: no tile, for midnight surfaces. onLight: no tile, ink lattice for white surfaces. */
+  tone?: "tile" | "onDark" | "onLight";
+  title?: string;
 }) {
   const uid = useId().replace(/:/g, "");
-  const rGrad = `rv-r-${uid}`;
-  const vGrad = `rv-v-${uid}`;
-  const tGrad = `rv-t-${uid}`;
+  const g = `ug-${uid}`;
+  const lattice = tone === "onLight" ? BRAND.ink : "#FFFFFF";
+  const origin = tone === "onLight" ? BRAND.ink : "#FFFFFF";
+  const hubCore = tone === "onLight" ? "#FFFFFF" : BRAND.midnight;
   return (
-    <svg
-      viewBox="0 0 48 48"
-      fill="none"
-      xmlns="http://www.w3.org/2000/svg"
-      role="img"
-      aria-label="RAEVOLT"
-      onClick={onClick}
-      className={cn("shrink-0", className)}
-    >
+    <svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label={title} className={cn("shrink-0", className)}>
       <defs>
-        <radialGradient id={tGrad} cx="24" cy="20" r="30" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#14173B" />
-          <stop offset="1" stopColor="#080A24" />
-        </radialGradient>
-        <linearGradient id={rGrad} x1="17" y1="14" x2="35" y2="36" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#FFFFFF" />
-          <stop offset="1" stopColor="#C7CBDA" />
-        </linearGradient>
-        <linearGradient id={vGrad} x1="25" y1="22" x2="48" y2="44" gradientUnits="userSpaceOnUse">
-          <stop offset="0" stopColor="#7C4DFF" />
-          <stop offset="1" stopColor="#4A1FE0" />
+        <linearGradient id={g} x1="11" y1="24" x2="37" y2="24" gradientUnits="userSpaceOnUse">
+          <stop offset="0" stopColor={BRAND.signal} />
+          <stop offset="1" stopColor={BRAND.electric} />
         </linearGradient>
       </defs>
-      {!bare && <rect width="48" height="48" rx="10.5" fill={`url(#${tGrad})`} />}
-      <g transform={bare ? undefined : "translate(9.6 9.6) scale(0.6)"}>
-        <path d={V_PATH} fill={`url(#${vGrad})`} />
-        <path d={R_PATH} fillRule="evenodd" clipRule="evenodd" fill={`url(#${rGrad})`} />
-      </g>
+      {tone === "tile" && <rect width="48" height="48" rx="11" fill={BRAND.midnight} />}
+      {GRID.map(([x, y]) => (
+        <circle key={`${x}-${y}`} cx={x} cy={y} r="1.7" fill={lattice} opacity={tone === "onLight" ? 0.18 : 0.28} />
+      ))}
+      <path d={ROUTE} stroke={`url(#${g})`} strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="11" cy="24" r="3.2" fill={origin} />
+      <circle cx="24" cy="24" r="4.6" fill={BRAND.signal} />
+      <circle cx="24" cy="24" r="1.7" fill={hubCore} />
+      <circle cx="37" cy="12" r="3.2" fill={BRAND.signal} />
+      <circle cx="37" cy="36" r="3.2" fill={BRAND.electric} />
     </svg>
   );
 }
 
-/** Full lockup: mark beside the RAEVOLT wordmark. */
-export function RaevoltLogo({
+/** Lockup: mark + wordmark. */
+export function UsopgridLogo({
   className,
   markClassName,
   wordClassName,
+  tone = "tile",
 }: {
   className?: string;
   markClassName?: string;
   wordClassName?: string;
+  tone?: "tile" | "onDark" | "onLight";
 }) {
   return (
     <span className={cn("inline-flex items-center gap-2.5", className)}>
-      <RaevoltMark className={cn("size-7", markClassName)} />
-      <span className={cn("text-sm font-bold uppercase tracking-[0.22em]", wordClassName)}>
-        Raevolt
-      </span>
+      <UsopgridMark tone={tone} className={cn("size-7", markClassName)} />
+      <span className={cn("font-display text-[15px] font-bold tracking-[0.06em]", wordClassName)}>USOPGRID</span>
     </span>
   );
 }

@@ -1,4 +1,5 @@
-// RAEVOLT transactions page — powerful filters + pagination (prompt §37, §58).
+// USOPGRID transactions page — powerful filters + pagination.
+import { TX_STATES, STATE_LABELS } from "@/convex/orchestration/states";
 import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -20,20 +21,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, StatusPill, EmptyState } from "@/components/raevolt";
+import { PageHeader, StatusPill, EmptyState } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
 import { Link } from "react-router";
 import { ChevronLeft, ChevronRight, Search, ArrowLeftRight, Loader2 } from "lucide-react";
 
-const STATUSES = [
-  "SUCCESSFUL",
-  "FAILED",
-  "PENDING",
-  "PROCESSING",
-  "REFUNDED",
-  "PARTIALLY_REFUNDED",
-  "CREATED",
-];
+const STATUSES = TX_STATES.filter((x) => x !== "CREATED" && x !== "VALIDATED" && x !== "ACCEPTED");
 
 export default function Transactions() {
   const [status, setStatus] = useState<string>("all");
@@ -99,7 +92,7 @@ export default function Transactions() {
                 <SelectItem value="all">All statuses</SelectItem>
                 {STATUSES.map((s) => (
                   <SelectItem key={s} value={s}>
-                    {s.replace(/_/g, " ")}
+                    {STATE_LABELS[s]}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -140,12 +133,12 @@ export default function Transactions() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Transaction</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Method</TableHead>
+                    <TableHead className="hidden md:table-cell">Customer</TableHead>
+                    <TableHead className="hidden lg:table-cell">Method</TableHead>
                     <TableHead className="text-right">Amount</TableHead>
-                    <TableHead className="text-right">Fee</TableHead>
+                    <TableHead className="hidden text-right md:table-cell">Fee</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead>Date</TableHead>
+                    <TableHead className="hidden sm:table-cell">Date</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -159,16 +152,16 @@ export default function Transactions() {
                           <div className="text-[11px] text-muted-foreground">{t.transactionId}</div>
                         </Link>
                       </TableCell>
-                      <TableCell className="text-sm">{t.customerEmail ?? "—"}</TableCell>
-                      <TableCell className="text-sm capitalize">{t.paymentMethod.replace(/_/g, " ")}</TableCell>
+                      <TableCell className="hidden max-w-[14rem] truncate text-sm md:table-cell">{t.customerEmail ?? "—"}</TableCell>
+                      <TableCell className="hidden text-sm capitalize lg:table-cell">{t.paymentMethod.replace(/_/g, " ")}</TableCell>
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatMoney(t.amountMinor, t.currency)}
                       </TableCell>
-                      <TableCell className="text-right text-sm tabular-nums text-muted-foreground">
+                      <TableCell className="hidden text-right text-sm tabular-nums text-muted-foreground md:table-cell">
                         {t.feeMinor != null ? formatMoney(t.feeMinor, t.currency) : "—"}
                       </TableCell>
                       <TableCell><StatusPill status={t.status} /></TableCell>
-                      <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      <TableCell className="hidden whitespace-nowrap text-sm text-muted-foreground sm:table-cell">
                         {new Date(t.createdAt).toLocaleString("en-GB", {
                           day: "2-digit",
                           month: "short",

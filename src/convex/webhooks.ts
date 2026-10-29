@@ -1,5 +1,5 @@
-// RAEVOLT webhook dispatcher (prompt §30): signed payloads, exponential
-// backoff, delivery history, dead-lettering. Driven by a cron job (crons.ts)
+// USOPGRID webhook dispatcher: signed payloads, exponential backoff,
+// delivery history, dead-lettering. Driven by a cron job (crons.ts)
 // and also triggerable immediately after payment events.
 
 import { v } from "convex/values";
@@ -66,8 +66,11 @@ export const attemptDeliveryInternal = internalAction({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "User-Agent": "RAEVOLT-Webhooks/1.0",
-          "X-RAEVOLT-Signature": `t=${timestamp},v1=${signature}`,
+          "User-Agent": "USOPGRID-Webhooks/2.0 (+https://usopgrid.com/developers#webhooks)",
+          "X-USOPGRID-Signature": `t=${timestamp},v1=${signature}`,
+          "X-USOPGRID-Event": delivery.event,
+          ...(delivery.eventId ? { "X-USOPGRID-Event-Id": delivery.eventId } : {}),
+          "X-USOPGRID-Delivery-Attempt": String(attempt),
         },
         body: payloadString,
         signal: controller.signal,

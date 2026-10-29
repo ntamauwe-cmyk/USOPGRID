@@ -1,4 +1,4 @@
-// RAEVOLT idempotency engine (prompt §9) — financial correctness first.
+// USOPGRID idempotency engine — financial correctness first.
 //
 // The same payment request must never create two financial transactions.
 // Flow: (orgId, Idempotency-Key, fingerprint) → status. A retried request with
@@ -130,12 +130,6 @@ type ActionRunMutation = MutationCtx["runMutation"];
 // payouts, checkout). Guarantees: a retried request with the same key replays
 // the original response; the operation itself runs at most once per key.
 // ---------------------------------------------------------------------------
-// Structural type: any context exposing runMutation (ActionCtx). Typed loosely
-// on purpose — the wrapper is generic over the caller's context shape.
-interface RunMutationLike {
-  runMutation: (ref: never, args: never) => Promise<unknown>;
-}
-
 export async function withIdempotency<T>(
   ctx: { runMutation: ActionCtx["runMutation"] },
   args: { orgId: Id<"organizations">; key: string; fp: string },

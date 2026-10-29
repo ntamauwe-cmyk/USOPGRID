@@ -1,12 +1,11 @@
-// RAEVOLT payment links page (prompt §21) — create, share, toggle links and
+// USOPGRID payment links page — create, share, toggle links and
 // track usage. Copy-to-clipboard for the public checkout URL.
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +22,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PageHeader, EmptyState, StatusPill } from "@/components/raevolt";
+import { PageHeader, EmptyState, StatusPill } from "@/components/kit";
 import { Link2, Plus, Loader2, Copy, Check, ExternalLink, ToggleLeft, ToggleRight } from "lucide-react";
 import { toast } from "sonner";
 
@@ -42,6 +41,8 @@ export default function PaymentLinks() {
   const [maxUses, setMaxUses] = useState("");
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  // Captured once per mount so render stays pure.
+  const [now] = useState(() => Date.now());
 
   async function handleCreate() {
     if (!title.trim()) {
@@ -161,7 +162,7 @@ export default function PaymentLinks() {
               {links.map((l) => {
                 const checkoutUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/pay/${l.linkId}`;
                 const disabled = l.status !== "active" ||
-                  (l.expiresAt !== undefined && l.expiresAt < Date.now()) ||
+                  (l.expiresAt !== undefined && l.expiresAt < now) ||
                   (l.maxUses !== undefined && l.useCount >= l.maxUses);
                 return (
                   <li key={l._id} className="flex flex-wrap items-center justify-between gap-3 py-4">

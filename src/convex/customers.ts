@@ -1,4 +1,4 @@
-// RAEVOLT customers module (prompt §20) — auto-upserted from payment activity.
+// USOPGRID customers module — auto-upserted from payment activity.
 // AUDIT FIX: lifetime volume is tracked per currency; mixing NGN and USD minor
 // units into one scalar was a financial misstatement.
 import { v } from "convex/values";
@@ -15,7 +15,7 @@ function volumesOf(raw: unknown): VolumeMap {
 }
 
 // ---------------------------------------------------------------------------
-// Risk-engine velocity counters (prompt §15). Internal — called by the
+// Risk-engine velocity counters. Internal — called by the
 // payment engine before processing. Reads are bounded by index windows.
 // ---------------------------------------------------------------------------
 export const riskSignalsInternal = internalQuery({

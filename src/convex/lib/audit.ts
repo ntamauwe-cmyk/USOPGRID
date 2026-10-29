@@ -1,4 +1,4 @@
-// RAEVOLT audit system (prompt §39). Everything important is auditable:
+// USOPGRID audit system. Everything important is auditable:
 // actor, action, resource, before/after, request id, timestamp.
 
 import { v } from "convex/values";

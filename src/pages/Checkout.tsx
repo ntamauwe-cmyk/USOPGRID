@@ -1,14 +1,14 @@
-// RAEVOLT public checkout — pays a payment link through POST /api/v1/checkout.
+// USOPGRID public checkout — pays a payment link through POST /api/v1/checkout.
 // Public page (no auth): shows only link-safe fields.
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { StatusPill } from "@/components/raevolt";
 import { formatMoney } from "@/lib/money";
 import { Loader2, CheckCircle2, CircleAlert, ShieldCheck } from "lucide-react";
-import { RaevoltMark } from "@/components/brand";
+import { UsopgridMark } from "@/components/brand";
+import { decimalToMinor } from "@/lib/money";
 
 const API_BASE = ((import.meta.env.VITE_CONVEX_URL as string | undefined) ?? "").replace(/\.cloud$/, ".site");
 
@@ -22,11 +22,14 @@ interface LinkInfo {
   expired: boolean;
   usesExhausted: boolean;
   merchantName: string;
+  environment?: "sandbox" | "production";
 }
 
 interface PayResult {
   id?: string;
   status?: string;
+  next_action?: { type: string; url?: string; instructions?: string } | null;
+  failure?: { message: string } | null;
   amount?: number;
   currency?: string;
 }
@@ -86,9 +89,14 @@ export default function Checkout() {
   }, [linkId]);
 
   async function handlePay() {
-    const amountMinor = link?.amountMinor != null
-      ? link.amountMinor
-      : Math.round(Number(amount) * 100);
+    let amountMinor = link?.amountMinor ?? NaN;
+    if (link && link.amountMinor == null) {
+      try {
+        amountMinor = decimalToMinor(amount.trim(), link.currency);
+      } catch {
+        amountMinor = NaN;
+      }
+    }
     if (!email.includes("@")) {
       setResult({ ok: false, message: "Enter a valid email address." });
       return;
@@ -116,7 +124,16 @@ export default function Checkout() {
         error?: { message: string };
       };
       if (res.ok && body.status === "success" && body.data?.payment) {
-        setResult({ ok: body.data.payment.status === "SUCCESSFUL", payment: body.data.payment, message: "" });
+        const p = body.data.payment;
+        if (p.next_action?.type === "redirect" && p.next_action.url && /^https:\/\//.test(p.next_action.url)) {
+          window.location.assign(p.next_action.url);
+          return;
+        }
+        setResult({
+          ok: p.status === "SUCCESSFUL",
+          payment: p,
+          message: p.status === "PENDING" ? "Your payment is being confirmed. You'll receive a receipt by email when it completes." : p.failure?.message ?? "",
+        });
       } else {
         setResult({ ok: false, message: body.error?.message ?? "Payment failed." });
       }
@@ -131,8 +148,8 @@ export default function Checkout() {
     <div className="flex min-h-screen items-center justify-center bg-[#080A24] px-4 py-10">
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-center gap-2.5 text-zinc-300">
-          <RaevoltMark bare className="size-7" />
-          <span className="text-xs font-bold uppercase tracking-[0.22em]">Raevolt</span>
+          <UsopgridMark tone="onDark" className="size-7" />
+          <span className="text-xs font-bold uppercase tracking-[0.22em]">USOPGRID</span>
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-6 backdrop-blur">
@@ -149,7 +166,7 @@ export default function Checkout() {
               <p className="mt-3 text-sm font-medium text-zinc-200">Link unavailable</p>
               <p className="mt-1 text-sm text-zinc-500">{loadError}</p>
               <a href="/" className="mt-4 text-xs text-zinc-400 underline-offset-2 hover:underline">
-                Powered by RAEVOLT
+                Powered by USOPGRID
               </a>
             </div>
           )}
@@ -262,7 +279,7 @@ export default function Checkout() {
                     Pay {link.amountMinor != null ? formatMoney(link.amountMinor, link.currency) : ""}
                   </Button>
                   <p className="flex items-center justify-center gap-1.5 text-[11px] text-zinc-500">
-                    <ShieldCheck className="size-3.5" /> Secured by RAEVOLT — sandbox environment, no real money moves
+                    <ShieldCheck className="size-3.5" /> {link.environment === "production" ? "Secured by USOPGRID. Card details are handled by the payment provider." : "Secured by USOPGRID. Test environment: no real money moves."}
                   </p>
                 </div>
               )}
@@ -271,7 +288,7 @@ export default function Checkout() {
         </div>
 
         <p className="mt-6 text-center text-[11px] text-zinc-600">
-          <a href="/" className="underline-offset-2 hover:underline">Payment infrastructure by RAEVOLT</a>
+          <a href="/" className="underline-offset-2 hover:underline">Payment infrastructure by USOPGRID</a>
         </p>
       </div>
     </div>

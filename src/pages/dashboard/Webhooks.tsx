@@ -1,4 +1,4 @@
-// RAEVOLT webhooks page (prompt §30): endpoint management, delivery history
+// USOPGRID webhooks page: endpoint management, delivery history
 // with live pipeline state, and replay for failed deliveries.
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
@@ -24,7 +24,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, EmptyState, StatusPill } from "@/components/raevolt";
+import { PageHeader, EmptyState, StatusPill } from "@/components/kit";
 import { Webhook, Plus, Loader2, ToggleLeft, ToggleRight, RotateCcw, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 
@@ -110,7 +110,7 @@ export default function Webhooks() {
                       Save the signing secret now — it is shown only once. Verify
                       deliveries by computing HMAC-SHA256 over
                       <code className="mx-1 rounded bg-muted px-1">{"t=<ts>.<payload>"}</code>
-                      and comparing to the X-RAEVOLT-Signature header.
+                      and comparing to the X-USOPGRID-Signature header.
                     </DialogDescription>
                   </DialogHeader>
                   <div className="flex items-center gap-2 rounded-md border bg-muted p-3">
@@ -128,7 +128,7 @@ export default function Webhooks() {
                   <DialogHeader>
                     <DialogTitle>Add a webhook endpoint</DialogTitle>
                     <DialogDescription>
-                      RAEVOLT signs every payload and retries failures with
+                      USOPGRID signs every payload and retries failures with
                       exponential backoff before dead-lettering.
                     </DialogDescription>
                   </DialogHeader>
@@ -138,7 +138,7 @@ export default function Webhooks() {
                       <Input
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
-                        placeholder="https://api.yourapp.com/hooks/raevolt"
+                        placeholder="https://api.yourapp.com/hooks/usopgrid"
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -185,7 +185,7 @@ export default function Webhooks() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Endpoints</CardTitle>
-          <CardDescription>Where RAEVOLT sends signed event payloads.</CardDescription>
+          <CardDescription>Where USOPGRID sends signed event payloads.</CardDescription>
         </CardHeader>
         <CardContent>
           {endpoints === undefined ? (

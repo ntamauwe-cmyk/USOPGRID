@@ -1,4 +1,4 @@
-// RAEVOLT Risk Engine (prompt §15) — deterministic rules scoring.
+// USOPGRID risk engine — deterministic rules scoring.
 //
 // This is a transparent, auditable rules engine, NOT machine learning. Every
 // score is explainable: each rule that fires adds a reason string and a
@@ -22,6 +22,12 @@ export interface RiskSignals {
 
 export interface RiskInput {
   amountMinor: number;
+  /**
+   * Amount converted to USD cents by the FX engine. Amount rules are scored on
+   * this so ₦50,000 (≈$30) and $50,000 are not treated alike. When absent,
+   * amount rules apply only to NGN (legacy thresholds) and are otherwise skipped.
+   */
+  amountUsdMinor?: number;
   currency: string;
   paymentMethod: string;
   customerEmail?: string;
@@ -34,9 +40,12 @@ export interface RiskAssessment {
   reasons: string[];
 }
 
-// Amount thresholds in minor units (kobo/cents). 5,000,000 = ₦50,000.
-const HIGH_AMOUNT = 5_000_000;
-const VERY_HIGH_AMOUNT = 20_000_000;
+// Amount thresholds. USD cents are the global basis; NGN kobo thresholds are
+// kept for records created before USD normalization existed.
+const HIGH_AMOUNT_USD = 300_000; // $3,000
+const VERY_HIGH_AMOUNT_USD = 1_500_000; // $15,000
+const HIGH_AMOUNT_NGN = 5_000_000; // ₦50,000
+const VERY_HIGH_AMOUNT_NGN = 20_000_000; // ₦200,000
 
 // Small, honest disposable-email list — extendable data, not code.
 const DISPOSABLE_DOMAINS = new Set([
@@ -54,10 +63,17 @@ export function evaluatePaymentRisk(input: RiskInput): RiskAssessment {
   const reasons: string[] = [];
 
   // --- Amount-based rules -------------------------------------------------
-  if (input.amountMinor >= VERY_HIGH_AMOUNT) {
+  const usd = input.amountUsdMinor;
+  const [amt, hi, vhi] =
+    usd !== undefined
+      ? [usd, HIGH_AMOUNT_USD, VERY_HIGH_AMOUNT_USD]
+      : input.currency === "NGN"
+        ? [input.amountMinor, HIGH_AMOUNT_NGN, VERY_HIGH_AMOUNT_NGN]
+        : [0, Infinity, Infinity];
+  if (amt >= vhi) {
     score += 45;
     reasons.push("amount_very_high");
-  } else if (input.amountMinor >= HIGH_AMOUNT) {
+  } else if (amt >= hi) {
     score += 25;
     reasons.push("amount_high");
   }

@@ -93,6 +93,8 @@ function Carousel({
 
   React.useEffect(() => {
     if (!api) return
+    // Syncing from an external carousel instance on mount is intended here.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     onSelect(api)
     api.on("reInit", onSelect)
     api.on("select", onSelect)

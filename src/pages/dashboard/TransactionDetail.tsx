@@ -1,4 +1,4 @@
-// RAEVOLT Transaction 360 (prompt §38) — one complete view of a transaction:
+// USOPGRID Transaction 360 — one complete view of a transaction:
 // identity, live pipeline, timeline, ledger postings, webhook deliveries,
 // failure intelligence and refund actions.
 import { useState } from "react";
@@ -6,6 +6,10 @@ import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { useParams, Link } from "react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { useSensitive } from "@/components/StepUp";
+import { errorMessage } from "@/components/kit";
+import { decimalToMinor, currencyDecimals } from "@/lib/money";
+import { getCountry } from "@/lib/geo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,7 +22,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { PageHeader, StatusPill, KeyValue } from "@/components/raevolt";
+import { PageHeader, StatusPill, KeyValue } from "@/components/kit";
 import { formatMoney, formatMoneySigned } from "@/lib/money";
 import {
   Loader2,
@@ -40,6 +44,7 @@ export default function TransactionDetail() {
   const { transactionId = "" } = useParams();
   const data = useQuery(api.queries.getTransaction360, { transactionId });
   const refund = useAction(api.queries.refundDashboardPayment);
+  const sensitive = useSensitive();
   const [refundOpen, setRefundOpen] = useState(false);
   const [refundBusy, setRefundBusy] = useState(false);
 
@@ -75,22 +80,25 @@ export default function TransactionDetail() {
   async function handleRefund(full: boolean, amountInput: string, reason: string) {
     setRefundBusy(true);
     try {
-      const amountMinor = full
-        ? undefined
-        : Math.round(Number(amountInput) * 100);
-      if (!full && (!Number.isFinite(amountMinor) || (amountMinor ?? 0) <= 0)) {
-        toast.error("Enter a valid refund amount.");
-        return;
+      let amountMinor: number | undefined;
+      if (!full) {
+        try {
+          amountMinor = decimalToMinor(amountInput.trim(), t.currency);
+          if (amountMinor <= 0) throw new Error();
+        } catch {
+          toast.error(`Enter a refund amount with at most ${currencyDecimals(t.currency)} decimal places.`);
+          return;
+        }
       }
-      await refund({
+      const r = await sensitive(() => refund({
         transactionId: t.transactionId,
         amountMinor,
         reason: reason || undefined,
-      });
-      toast.success("Refund accepted — ledger entries posted and webhook queued.");
+      }));
+      toast.success(r.status === "REFUND_PENDING" ? "Refund sent. Waiting for the provider to confirm." : "Refund completed. Ledger posted and webhook queued.");
       setRefundOpen(false);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Refund failed");
+      toast.error(errorMessage(err, "Refund failed"));
     } finally {
       setRefundBusy(false);
     }
@@ -108,7 +116,7 @@ export default function TransactionDetail() {
       </div>
       <PageHeader
         title={t.reference}
-        description={`RAEVOLT id ${t.transactionId}`}
+        description={`USOPGRID id ${t.transactionId}`}
         actions={
           canRefund ? (
             <Dialog open={refundOpen} onOpenChange={setRefundOpen}>
@@ -151,7 +159,7 @@ export default function TransactionDetail() {
                     </select>
                   </div>
                   <div className="space-y-1.5">
-                    <Label htmlFor="refund-amount">Amount (major units)</Label>
+                    <Label htmlFor="refund-amount">Amount ({t.currency})</Label>
                     <Input
                       id="refund-amount"
                       name="amount"
@@ -178,7 +186,7 @@ export default function TransactionDetail() {
         }
       />
 
-      {/* Failure intelligence banner (prompt §35) — explain, don't just report */}
+      {/* Failure intelligence banner — explain, don't just report */}
       {t.status === "FAILED" && t.failureCategory && (
         <Card className="mb-6 border-destructive/40 bg-destructive/5">
           <CardHeader className="pb-2">
@@ -206,9 +214,7 @@ export default function TransactionDetail() {
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Status pipeline</CardTitle>
               <CardDescription>
-                Pending → processing → cleared/failed. Every state change is
-                recorded — payment success and settlement confirmation are
-                separate milestones.
+                Every state change is recorded. Payment success and settlement confirmation are separate milestones.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -246,9 +252,74 @@ export default function TransactionDetail() {
                     : "Not evaluated"}
                 </KeyValue>
                 <KeyValue label="Environment">{t.environment}</KeyValue>
+                <KeyValue label="Attempts">{`${t.attemptCount ?? 0}${t.failoverCount ? `, ${t.failoverCount} failover` : ""}`}</KeyValue>
+                <KeyValue label="Payer country">{t.country ? (getCountry(t.country)?.name ?? t.country) : "—"}</KeyValue>
+                <KeyValue label="Compliance">{t.complianceDecision ?? "—"}</KeyValue>
               </div>
+              {t.outcomeUnknown && (
+                <p className="mt-4 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                  The provider did not give a clear answer. USOPGRID is confirming the outcome with {t.provider} and will update this payment automatically. Do not retry it under a new reference.
+                </p>
+              )}
             </CardContent>
           </Card>
+
+          {/* Routing + attempts */}
+          {(data.routing || data.attempts.length > 0) && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Routing and provider attempts</CardTitle>
+                {data.routing && <CardDescription>{data.routing.explanation}</CardDescription>}
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {data.attempts.length > 0 && (
+                  <ol className="space-y-2">
+                    {data.attempts.map((a) => (
+                      <li key={a.attempt} className="flex flex-wrap items-start justify-between gap-2 rounded-md border p-3 text-sm">
+                        <div>
+                          <div className="font-medium">{a.attempt}. {a.providerId}{a.probe && <span className="ml-1 text-xs text-muted-foreground">(health probe)</span>}</div>
+                          {a.failure && <div className="text-xs text-muted-foreground">{a.failure.code}: {a.failure.message}</div>}
+                          {a.providerReference && <div className="font-mono text-[11px] text-muted-foreground">{a.providerReference}</div>}
+                        </div>
+                        <div className="flex items-center gap-2"><span className="text-xs tabular-nums text-muted-foreground">{a.latencyMs} ms</span><StatusPill status={a.status} /></div>
+                      </li>
+                    ))}
+                  </ol>
+                )}
+                {data.routing && data.routing.evaluations.length > 0 && (
+                  <details className="text-sm">
+                    <summary className="cursor-pointer text-muted-foreground">Every candidate the router considered</summary>
+                    <table className="mt-2 w-full text-xs">
+                      <tbody className="divide-y">
+                        {data.routing.evaluations.map((e) => (
+                          <tr key={e.providerId}>
+                            <td className="py-1.5 pr-2 font-medium">{e.providerId}</td>
+                            <td className="py-1.5 pr-2 tabular-nums">{e.eligible ? e.score.toFixed(3) : "—"}</td>
+                            <td className="py-1.5 text-muted-foreground">{e.reasons.join("; ")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </details>
+                )}
+                {data.refunds.length > 0 && (
+                  <div>
+                    <div className="mb-1 text-xs font-medium text-muted-foreground">Refunds</div>
+                    <ul className="space-y-1 text-sm">
+                      {data.refunds.map((r) => (
+                        <li key={r.refundId} className="flex justify-between gap-2"><span className="font-mono text-xs">{r.refundId}</span><span className="tabular-nums">{formatMoney(r.amountMinor, t.currency)}</span><StatusPill status={r.status} /></li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {data.recovery.some((j) => j.status === "open") && (
+                  <p className="text-xs text-muted-foreground">
+                    Recovery: {data.recovery.filter((j) => j.status === "open").map((j) => `${j.kind.replace(/_/g, " ")}, ${j.checksDone} checks so far, next ${new Date(j.nextCheckAt).toLocaleTimeString()}`).join("; ")}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Timeline */}
           <Card>
@@ -257,7 +328,7 @@ export default function TransactionDetail() {
                 <Clock className="size-4" /> Timeline
               </CardTitle>
               <CardDescription>
-                Merchant request → RAEVOLT engine → provider → ledger → webhooks
+                Merchant request, USOPGRID engine, provider, ledger, webhooks
               </CardDescription>
             </CardHeader>
             <CardContent>

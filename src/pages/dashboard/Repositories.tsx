@@ -1,4 +1,4 @@
-// GitHub integration page (RAEVOLT developer platform).
+// GitHub integration page (USOPGRID developer platform).
 // Connect a GitHub personal access token (validated live, stored as SHA-256
 // hash, shown only as a 4-char hint), browse repositories and branches.
 import { useState } from "react";
@@ -9,15 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   Github,
@@ -31,7 +22,7 @@ import {
   Lock,
   ExternalLink,
 } from "lucide-react";
-import { PageHeader } from "@/components/raevolt";
+import { PageHeader } from "@/components/kit";
 
 interface RepoItem {
   name: string;
@@ -128,7 +119,7 @@ export default function Repositories() {
     <div className="mx-auto max-w-5xl">
       <PageHeader
         title="Repositories"
-        description="Connect GitHub to browse your repositories and branches alongside your RAEVOLT integration."
+        description="Connect GitHub to browse your repositories and branches alongside your USOPGRID integration."
       />
 
       {connection === undefined ? (
