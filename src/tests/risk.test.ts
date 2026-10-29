@@ -91,3 +91,19 @@ describe("risk engine", () => {
     expect(r.reasons.length).toBeGreaterThan(0);
   });
 });
+
+describe("risk engine — global amount normalization", () => {
+  test("USD-equivalent drives amount rules in every currency", () => {
+    // ¥6,000,000 is ≈ $40,000 — very high — even though the integer is small for NGN rules.
+    const jpy = evaluatePaymentRisk(input({ currency: "JPY", amountMinor: 6_000_000, amountUsdMinor: 4_000_000 }));
+    expect(jpy.reasons).toContain("amount_very_high");
+    // ₦6,000,000 kobo (₦60,000 ≈ $40) is small in USD terms.
+    const ngn = evaluatePaymentRisk(input({ currency: "NGN", amountMinor: 6_000_000, amountUsdMinor: 4_000 }));
+    expect(ngn.reasons).not.toContain("amount_high");
+  });
+  test("without an FX conversion non-NGN amounts are not mis-scored", () => {
+    const r = evaluatePaymentRisk(input({ currency: "IDR", amountMinor: 50_000_000 }));
+    expect(r.reasons).not.toContain("amount_high");
+    expect(r.reasons).not.toContain("amount_very_high");
+  });
+});

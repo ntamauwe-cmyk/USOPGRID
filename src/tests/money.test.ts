@@ -19,9 +19,12 @@ describe("currency registry", () => {
     expect(currencyDecimals("NGN")).toBe(2);
   });
 
-  test("every currency has 0 or 2 decimals and a symbol", () => {
+  test("every currency has an ISO 4217 exponent (0–4) and a symbol", () => {
+    expect(currencyDecimals("KWD")).toBe(3);
+    expect(currencyDecimals("JPY")).toBe(0);
+    expect(Object.values(CURRENCIES).filter((c) => c.active).length).toBeGreaterThan(150);
     for (const info of Object.values(CURRENCIES)) {
-      expect([0, 2]).toContain(info.decimals);
+      expect([0, 2, 3, 4]).toContain(info.decimals);
       expect(info.symbol.length).toBeGreaterThan(0);
       expect(/^[A-Z]{3}$/.test(info.code)).toBe(true);
     }

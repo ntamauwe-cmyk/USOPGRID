@@ -56,12 +56,17 @@ describe("fee engine", () => {
     expect(f.parts.map((p) => p.amountMinor)).toEqual([2, 5000]);
   });
 
-  test("fee currency normalization across equal-decimal currencies", () => {
-    // Merchant priced in USD fixed 50 cents, transaction in NGN.
+  test("fixed fee in another currency is never reinterpreted as local minor units", () => {
+    // Merchant priced a USD 0.50 fixed fee; transaction in NGN. 50 cents is
+    // NOT 50 kobo — without an FX conversion the fixed part is withheld and flagged.
     const f = computeFees(merchant({ feeCurrency: "USD", feeFixedMinor: 50 }), 10_000, "NGN");
-    // USD and NGN both 2 decimals -> scale 1 -> fixed stays 50 minor units
-    expect(f.feeMinor).toBe(200); // 150 + 50
-    expect(f.currency).toBe("USD");
+    expect(f.feeMinor).toBe(150);
+    expect(f.currency).toBe("NGN");
+    expect(f.fixedFeeUnconverted).toEqual({ amountMinor: 50, currency: "USD" });
+    // With the FX engine's conversion (e.g. 0.50 USD = ₦765.00) it is charged.
+    const g = computeFees(merchant({ feeCurrency: "USD", feeFixedMinor: 50 }), 10_000, "NGN", { fixedFeeInTxnMinor: 76_500 });
+    expect(g.feeMinor).toBe(150 + 76_500);
+    expect(g.fixedFeeUnconverted).toBe(undefined);
   });
 
   test("zero-fee merchant yields zero fee and full net", () => {
