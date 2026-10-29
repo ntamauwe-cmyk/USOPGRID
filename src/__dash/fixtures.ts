@@ -86,6 +86,18 @@ const listPayouts: R<typeof api.payouts.listPayouts> = { isDone: true, continueC
   { _id: id("payouts", "p3"), _creationTime: NOW - D, currency: "NGN", status: "FAILED", orgId: id("organizations", "org1"), merchantId: id("merchants", "mer1"), createdAt: NOW - D, updatedAt: NOW - D, amountMinor: 12_000_000, reference: "PO-1179", feeMinor: 24_000, beneficiaryId: id("beneficiaries", "b1"), payoutId: "po_2bq9x0", provider: "paystack", failureMessage: "Paystack rejected the recipient: Account number invalid", narration: "Refund to vendor" },
 ] };
 
+const recipientsList: R<typeof api.recipients.list> = [
+  { id: "rcp_mh2k4a9xq1", _id: id("recipients", "r1"), name: "Ada Crafts Ltd", email: "payments@adacrafts.ng", currency: "NGN", status: "active", balanceMinor: 1_284_500_00, payoutAccount: { name: "Ada Crafts Ltd", bank: "GTBank", account: "••••6789", country: "NG" }, metadata: null, createdAt: NOW - 40 * D },
+  { id: "rcp_mh2k5b0zt7", _id: id("recipients", "r2"), name: "Bayo Prints", email: null, currency: "NGN", status: "active", balanceMinor: 312_000_00, payoutAccount: { name: "Bayo Prints", bank: "Access Bank", account: "••••4321", country: "NG" }, metadata: null, createdAt: NOW - 21 * D },
+  { id: "rcp_mh2k6c1yu3", _id: id("recipients", "r3"), name: "Wanjiku Designs", email: "hello@wanjiku.co.ke", currency: "KES", status: "active", balanceMinor: -4_250_00, payoutAccount: { name: "Wanjiku Designs", bank: "Safaricom M-Pesa", account: "••••0912", country: "KE" }, metadata: null, createdAt: NOW - 9 * D },
+  { id: "rcp_mh2k7d2vw5", _id: id("recipients", "r4"), name: "Kofi Leatherworks", email: null, currency: "GHS", status: "disabled", balanceMinor: 0, payoutAccount: { name: "Kofi Leatherworks", bank: "MTN MoMo", account: "••••5518", country: "GH" }, metadata: null, createdAt: NOW - 60 * D },
+];
+const recipientShares: R<typeof api.recipients.sharesFor> = [
+  { at: NOW - H, ledgerRef: "SPL-txn_mh9a1", description: "Share of txn_mh9a1q8ws2", amountMinor: 64_000_00, currency: "NGN", transactionId: "txn_mh9a1q8ws2" },
+  { at: NOW - 5 * H, ledgerRef: "SPLR-rf_77a", description: "Share reversed for refund rf_77a", amountMinor: -8_000_00, currency: "NGN", transactionId: "txn_mh8z0p1ab9" },
+  { at: NOW - D, ledgerRef: "PO-po_8f2k1a", description: "Payout po_8f2k1a to ••••6789", amountMinor: -500_100_00, currency: "NGN", transactionId: null },
+];
+
 const byKey = (rows: [string, number, number][]) => rows.map(([key, count, rate]) => ({ key, count, successful: Math.round(count * rate), failed: count - Math.round(count * rate), successRate: rate, volumeByCurrency: {} }));
 const analytics: R<typeof api.analytics.dashboard> = {
   environment: "production", generatedAt: NOW, dataFreshness: { latestTransactionAt: NOW - 60_000, truncated: false },
@@ -158,9 +170,9 @@ const members: R<typeof api.orgs.listMembers> = [
 ];
 const invitations: R<typeof api.orgs.listInvitations> = [{ _id: id("orgInvitations", "i1"), email: "ops@kudiretail.ng", role: "operations", expiresAt: NOW + 6 * D, createdAt: NOW - D }];
 const apiKeys: R<typeof api.services.listApiKeys> = [
-  { _id: id("apiKeys", "k1"), name: "Checkout server", environment: "production", mode: "secret", prefix: "sk_live_7Hq2", status: "active", expiresAt: null, lastUsedAt: NOW - 30_000, createdAt: NOW - 40 * D },
-  { _id: id("apiKeys", "k2"), name: "Checkout server (old)", environment: "production", mode: "secret", prefix: "sk_live_Q81z", status: "active", expiresAt: NOW + 20 * H, lastUsedAt: NOW - 2 * H, createdAt: NOW - 120 * D },
-  { _id: id("apiKeys", "k3"), name: "Staging", environment: "sandbox", mode: "secret", prefix: "sk_sandbox_c1Px", status: "active", expiresAt: null, lastUsedAt: NOW - D, createdAt: NOW - 70 * D },
+  { _id: id("apiKeys", "k1"), name: "Checkout server", environment: "production", mode: "secret", prefix: "sk_live_7Hq2", status: "active", scope: "full", allowedIps: ["102.89.40.0/24", "41.58.22.17"], expiresAt: null, lastUsedAt: NOW - 30_000, createdAt: NOW - 40 * D },
+  { _id: id("apiKeys", "k2"), name: "Checkout server (old)", environment: "production", mode: "secret", prefix: "sk_live_Q81z", status: "active", scope: "full", allowedIps: [], expiresAt: NOW + 20 * H, lastUsedAt: NOW - 2 * H, createdAt: NOW - 120 * D },
+  { _id: id("apiKeys", "k3"), name: "Finance reporting", environment: "production", mode: "secret", prefix: "sk_live_r9Dm", status: "active", scope: "read_only", allowedIps: [], expiresAt: null, lastUsedAt: NOW - D, createdAt: NOW - 70 * D },
 ];
 const settlementSummary: R<typeof api.services.getSettlementSummary> = { balances: [{ merchantId: id("merchants", "mer1"), merchantName: "Kudi Retail", currency: "NGN", balanceMinor: 18_442_910_00 }, { merchantId: id("merchants", "mer1"), merchantName: "Kudi Retail", currency: "KES", balanceMinor: 2_104_500_00 }] };
 
@@ -169,6 +181,7 @@ const merchants: R<typeof api.orgs.listMerchants> = [{ _id: id("merchants", "mer
 
 export const FIXTURES: Record<string, unknown> = {
   "orgs:orgProfile": orgProfile,
+  "signInOptions:list": { sso: [{ id: "microsoft-entra-id", label: "Microsoft" }, { id: "google", label: "Google Workspace" }] },
   "orgs:listMerchants": merchants,
   "orgs:getOrgContext": orgContext,
   "users:currentUser": currentUser,
@@ -180,6 +193,8 @@ export const FIXTURES: Record<string, unknown> = {
   "routing:recentDecisions": recentDecisions,
   "payouts:listPayouts": listPayouts,
   "payouts:listBeneficiaries": listBeneficiaries,
+  "recipients:list": recipientsList,
+  "recipients:sharesFor": recipientShares,
   "analytics:dashboard": analytics,
   "reconciliation:listRuns": listRuns,
   "reconciliation:listExceptions": listExceptions,

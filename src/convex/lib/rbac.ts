@@ -164,3 +164,21 @@ export async function requireOperatorStepUp(ctx: AnyCtx): Promise<{ userId: Id<"
   }
   return admin;
 }
+
+/**
+ * Approving someone else's money movement: the approver must have an
+ * authenticator enrolled AND have confirmed it recently, whatever the
+ * organization's MFA policy says.
+ */
+export async function requireStrongStepUp(ctx: AnyCtx, oc: OrgContext): Promise<void> {
+  const mfa = await ctx.db
+    .query("userMfa")
+    .withIndex("by_user", (q) => q.eq("userId", oc.userId))
+    .unique();
+  if (mfa?.status !== "enabled") {
+    throw new ConvexError("MFA_REQUIRED: approvers must enable multi-factor authentication (Security page) first.");
+  }
+  if (!mfa.verifiedUntil || mfa.verifiedUntil < Date.now()) {
+    throw new ConvexError("MFA_STEP_UP: confirm with your authenticator code to continue.");
+  }
+}

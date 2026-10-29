@@ -27,13 +27,69 @@ The key decides organization **and** environment. Publishable keys cannot call t
 | POST | `/fx/quotes` | `{ from, to, amount }` → 5-minute quote |
 | GET | `/balance` | Ledger balances |
 | GET | `/settlements` | Settlement batches |
-| POST/GET | `/payouts` | Payouts to verified beneficiaries |
+| POST/GET | `/payouts` | Payouts to verified beneficiaries; 202 + `approval` when two-person approval applies |
+| GET/POST | `/recipients` | Marketplace recipients (sellers, partners) with balances; create with `payout_account` or `beneficiary_id` |
+| GET | `/recipients/:id` | One recipient and its balance |
+| POST | `/recipients/:id/payouts` | Pay a recipient from its balance (`amount` optional = everything available); Idempotency-Key supported |
+| POST | `/recipients/:id/disable` · `/enable` | Stop or resume shares and payouts |
+| GET/POST | `/payment_methods` | Saved payment methods; import a provider token |
+| POST | `/payment_methods/:id/revoke` | Stop using a saved method |
+| GET/POST | `/plans` | Recurring billing plans |
+| GET/POST | `/subscriptions` | Subscriptions charged automatically |
+| GET | `/subscriptions/:id` | With invoices |
+| POST | `/subscriptions/:id/cancel` | Now, or `at_period_end: true` |
 | GET | `/customers` | Per-currency lifetime volume |
+| GET | `/whoami` | The calling key, its environment and scope, and the client IP USOPGRID sees |
 | GET | `/reference` | Public: currencies (with minor units), countries, methods, states |
 | GET | `/health` | Public liveness |
 | GET | `/openapi.json` | Public spec |
 | GET/POST | `/checkout/:linkId` | Public payment-link checkout (link-scoped, org environment) |
 | POST | `/webhooks/providers/:connectionKey` | Inbound provider events (signature verified) |
+
+## API keys: scopes and IP allowlists
+
+Keys are `full` or `read_only` (read-only keys can call GET routes only). A key
+can carry an allowlist of up to 50 IPv4/IPv6 addresses or CIDR ranges; calls
+from anywhere else are refused with 403. Use `GET /whoami` to see the address
+USOPGRID observes before turning an allowlist on. Live secret keys are refused
+when sent from a browser (an `Origin` header).
+
+## Marketplace split payments
+
+Name up to 10 recipients in `splits` on `POST /payments`:
+
+```json
+{ "amount": 1000000, "currency": "NGN", "payment_method": "card",
+  "splits": [ { "recipient": "rcp_…", "percent": 80 },
+              { "recipient": "rcp_…", "amount": 50000 } ] }
+```
+
+- Each share is a fixed `amount` (minor units) or a `percent` (up to two decimals, rounded down).
+- Shares come out of your net after USOPGRID fees and must fit within it; the remainder stays with you. Recipients must be active and paid in the payment's currency. Invalid splits are refused with 422 before anything is created.
+- When the payment succeeds, each share moves from your balance to the recipient's ledger balance (`SPL-…` posting). The payment shows `splits[].allocated`.
+- Refunds reverse shares in proportion (`SPLR-…`), computed cumulatively so a full refund reverses exactly the full share.
+- Recipients are paid out from their own balance to their own account via `POST /recipients/:id/payouts`; the payout fee is taken from the recipient's balance, failed or reversed payouts return to it, and the two-person approval rule applies as for any payout.
+- If a payment is refunded after the recipient was paid, its balance goes negative and further payouts wait until new shares cover it.
+- Lost chargebacks are taken from your balance, not from recipients; recover a seller's part under your own marketplace terms.
+
+## Recurring billing
+
+Take a first payment with `save_payment_method: true` (and `customer.email`), or
+import a provider token with `POST /payment_methods`. Create a plan, then a
+subscription for that saved method. Renewals run every 5 minutes for anything
+due, are charged only at the provider that issued the token, and use one
+invoice and one idempotency key per attempt. Recoverable failures are retried
+on days 1, 3, 5 and 7, then the subscription becomes `unpaid`; hard declines
+stop at once.
+
+## Two-person approval
+
+Organizations can require a second team member to approve payouts (all, or
+above a USD threshold). The API then answers `202` with
+`{ "approval": { "id", "status": "pending_approval" } }` and no money moves
+until someone other than the requester approves under Approvals in the
+dashboard, with a fresh authenticator code. Weakening the policy itself also
+needs a second approver. Requests expire after 72 hours.
 
 ## Request conventions
 
@@ -79,7 +135,14 @@ Retries: 30 s, 2 min, 10 min, 30 min, 2 h, 6 h, then dead-letter (replayable).
 
 Events: `payment.successful`, `payment.pending`, `payment.requires_action`,
 `payment.declined`, `payment.failed`, `payment.expired`, `payment.refunded`,
-`refund.pending`, `refund.failed`, `payment.reconciliation_exception`.
+`refund.pending`, `refund.failed`, `payment.reconciliation_exception`,
+`payment_method.saved`, `subscription.created`, `subscription.renewed`,
+`subscription.past_due`, `subscription.unpaid`, `subscription.canceled`,
+`invoice.paid`, `invoice.payment_failed`.
+
+Endpoint URLs must be HTTPS on a public host; private, loopback, link-local and
+cloud-metadata addresses are refused when saved and again at delivery, and
+redirects are not followed.
 
 ## Rate limits and metering
 

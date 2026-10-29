@@ -13,6 +13,7 @@ import { toast } from "sonner";
 import { ArrowDown, ArrowUp, Plus, Route as RouteIcon, Trash2, Pencil } from "lucide-react";
 import { PAYMENT_METHODS, METHOD_LABELS } from "@/convex/providers/types";
 import { decimalToMinor, formatMoney, currencyDecimals } from "@/lib/money";
+import { Backtest, Scorecards } from "./RoutingInsights";
 
 type RuleRow = NonNullable<ReturnType<typeof useQuery<typeof api.routing.listRules>>>["rules"][number];
 
@@ -341,6 +342,8 @@ export default function Routing() {
 
       {data && <Strategy initial={data.strategy} canEdit={data.canEdit} />}
       <Simulator />
+      <Scorecards />
+      {data && catalog && <Backtest rules={data.rules} providers={providers} weights={data.strategy.weights} />}
 
       <section className="space-y-3" aria-labelledby="dec-h">
         <h2 id="dec-h" className="text-lg font-semibold">Recent decisions</h2>

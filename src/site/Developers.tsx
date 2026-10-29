@@ -14,6 +14,9 @@ const TOC = [
   ["webhooks", "Webhooks"],
   ["errors", "Errors"],
   ["refunds", "Refunds"],
+  ["marketplace", "Split payments"],
+  ["billing", "Recurring billing"],
+  ["payouts", "Payouts & approvals"],
   ["routing", "Routing"],
   ["fx", "FX quotes"],
   ["pagination", "Pagination & limits"],
@@ -202,7 +205,7 @@ Authorization: Bearer sk_live_Q2m...      # production`}</Code>
 X-USOPGRID-Event: payment.successful
 X-USOPGRID-Event-Id: evt_8Jd...      # de-duplicate on this
 X-USOPGRID-Delivery-Attempt: 1`}</Code>
-              <p>Events: <code>payment.successful</code>, <code>payment.pending</code>, <code>payment.requires_action</code>, <code>payment.declined</code>, <code>payment.failed</code>, <code>payment.expired</code>, <code>payment.refunded</code>, <code>refund.pending</code>, <code>refund.failed</code>, <code>payment.reconciliation_exception</code>, or <code>*</code> for all.</p>
+              <p>Events: <code>payment.successful</code>, <code>payment.pending</code>, <code>payment.requires_action</code>, <code>payment.declined</code>, <code>payment.failed</code>, <code>payment.expired</code>, <code>payment.refunded</code>, <code>refund.pending</code>, <code>refund.failed</code>, <code>payment.reconciliation_exception</code>, <code>payment_method.saved</code>, <code>subscription.created</code>, <code>subscription.renewed</code>, <code>subscription.past_due</code>, <code>subscription.unpaid</code>, <code>subscription.canceled</code>, <code>invoice.paid</code>, <code>invoice.payment_failed</code>, or <code>*</code> for all.</p>
               <h3>Verify the signature</h3>
               <Code>{`// Node.js
 import crypto from "node:crypto";
@@ -259,6 +262,37 @@ def verify(raw_body: bytes, header: str, secret: str, tolerance=300) -> bool:
               <p>Refunds go back through the provider that took the payment. Concurrent refunds can never exceed the captured amount. If the provider's answer is unclear the payment stays <code>REFUND_PENDING</code> until its webhook confirms the result.</p>
             </section>
 
+            <section id="marketplace">
+              <h2>Marketplace split payments</h2>
+              <p>Add the sellers or partners on your platform as recipients, then name them in a payment's <code>splits</code>:</p>
+              <Code>{`curl -X POST "$USOPGRID_API/recipients" -H "Authorization: Bearer $USOPGRID_SECRET_KEY" \
+  -d '{ "name": "Ada Crafts Ltd", "email": "payments@adacrafts.ng",
+        "payout_account": { "bank_name": "GTBank", "bank_code": "058",
+                            "account_number": "0123456789", "currency": "NGN", "country": "NG" } }'
+# → { "recipient": { "id": "rcp_...", "balance": 0, "payout_account": { "account": "••••6789", ... } } }
+
+curl -X POST "$USOPGRID_API/payments" -H "Authorization: Bearer $USOPGRID_SECRET_KEY" \
+  -H "Idempotency-Key: order-7782" \
+  -d '{ "amount": 1000000, "currency": "NGN", "payment_method": "card", "country": "NG",
+        "splits": [ { "recipient": "rcp_...", "percent": 80 } ] }'`}</Code>
+              <p>Each share is an <code>amount</code> in minor units or a <code>percent</code> (up to two decimals, rounded down). Shares come out of your net after fees and must fit within it; the rest is yours. When the payment succeeds each share moves into the recipient's balance; refunds take shares back in proportion. Pay a recipient with <code>POST /recipients/:id/payouts</code> (omit <code>amount</code> to pay everything available). The payout fee comes from the recipient's balance, and your approval rules apply.</p>
+            </section>
+
+            <section id="billing">
+              <h2>Recurring billing</h2>
+              <p>Save a payment method on a first payment with <code>"save_payment_method": true</code> and <code>customer.email</code> (or import a provider token with <code>POST /payment_methods</code>). Then create a plan and subscribe the customer:</p>
+              <Code>{`curl -X POST "$USOPGRID_API/plans" -H "Authorization: Bearer $USOPGRID_SECRET_KEY" \
+  -d '{ "name": "Business monthly", "amount": 2500000, "currency": "NGN", "interval": "month" }'
+curl -X POST "$USOPGRID_API/subscriptions" -H "Authorization: Bearer $USOPGRID_SECRET_KEY" \
+  -d '{ "plan": "plan_...", "payment_method": "pm_..." }'`}</Code>
+              <p>Renewals are charged at the provider that issued the saved method, one invoice per period. Recoverable failures are retried on days 1, 3, 5 and 7 before the subscription becomes <code>unpaid</code>; hard declines stop at once. Listen for <code>invoice.paid</code>, <code>invoice.payment_failed</code> and the <code>subscription.*</code> events.</p>
+            </section>
+
+            <section id="payouts">
+              <h2>Payouts and approvals</h2>
+              <p><code>POST /payouts</code> pays a saved beneficiary from your balance. If your organization requires two-person approval, the API answers <code>202</code> with an <code>approval</code> object and no money moves until a different team member approves it in the dashboard with a fresh authenticator code. Send an <code>Idempotency-Key</code> so retries never create a second payout or approval. Bulk payouts from a CSV file are available in the dashboard.</p>
+            </section>
+
             <section id="routing">
               <h2>Routing</h2>
               <p>Ask the router what it would do, with your live configuration, without moving money:</p>
@@ -301,7 +335,20 @@ def verify(raw_body: bytes, header: str, secret: str, tolerance=300) -> bool:
                     ["GET", "/settlements", "Settlement batches"],
                     ["POST", "/payouts", "Pay out to a beneficiary"],
                     ["GET", "/payouts", "List payouts"],
+                    ["GET", "/recipients", "Marketplace recipients with balances"],
+                    ["POST", "/recipients", "Add a recipient"],
+                    ["GET", "/recipients/:id", "A recipient and its balance"],
+                    ["POST", "/recipients/:id/payouts", "Pay a recipient from its balance"],
+                    ["POST", "/recipients/:id/disable", "Stop shares and payouts (and /enable)"],
+                    ["GET", "/payment_methods", "Saved payment methods"],
+                    ["POST", "/payment_methods", "Import a provider token"],
+                    ["GET", "/plans", "Billing plans"],
+                    ["POST", "/plans", "Create a plan"],
+                    ["GET", "/subscriptions", "Subscriptions"],
+                    ["POST", "/subscriptions", "Subscribe a customer"],
+                    ["POST", "/subscriptions/:id/cancel", "Cancel now or at period end"],
                     ["GET", "/customers", "Customers"],
+                    ["GET", "/whoami", "The calling key and the client IP USOPGRID sees"],
                     ["GET", "/reference", "Currencies, countries, methods, states (public)"],
                     ["GET", "/health", "Liveness (public)"],
                   ].map(([m, p, d]) => <tr key={m + p}><td><code>{m}</code></td><td><code>{p}</code></td><td>{d}</td></tr>)}

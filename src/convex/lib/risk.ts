@@ -44,8 +44,12 @@ export interface RiskAssessment {
 // kept for records created before USD normalization existed.
 const HIGH_AMOUNT_USD = 300_000; // $3,000
 const VERY_HIGH_AMOUNT_USD = 1_500_000; // $15,000
-const HIGH_AMOUNT_NGN = 5_000_000; // ₦50,000
-const VERY_HIGH_AMOUNT_NGN = 20_000_000; // ₦200,000
+// Fallback when no fresh FX rate is available: the USD limits converted at a
+// conservative ₦1,650/US$ and rounded (≈ $3,000 and ≈ $15,000). The earlier
+// ₦50,000 / ₦200,000 limits were ~100x stricter than the USD rule and blocked
+// ordinary business payments.
+const HIGH_AMOUNT_NGN = 500_000_000; // ₦5,000,000
+const VERY_HIGH_AMOUNT_NGN = 2_500_000_000; // ₦25,000,000
 
 // Small, honest disposable-email list — extendable data, not code.
 const DISPOSABLE_DOMAINS = new Set([
@@ -70,6 +74,10 @@ export function evaluatePaymentRisk(input: RiskInput): RiskAssessment {
       : input.currency === "NGN"
         ? [input.amountMinor, HIGH_AMOUNT_NGN, VERY_HIGH_AMOUNT_NGN]
         : [0, Infinity, Infinity];
+  if (usd === undefined && input.currency !== "NGN" && input.currency !== "USD") {
+    // No reliable USD value: record it rather than guess (scored as 0).
+    reasons.push("amount_unassessed_no_fx");
+  }
   if (amt >= vhi) {
     score += 45;
     reasons.push("amount_very_high");

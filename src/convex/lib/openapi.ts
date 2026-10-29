@@ -107,11 +107,67 @@ export function buildOpenApiSpec(serverUrl: string) {
       "/balance": { get: { tags: ["Balances & settlements"], operationId: "getBalance", summary: "Merchant balances from the ledger", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/settlements": { get: { tags: ["Balances & settlements"], operationId: "listSettlements", summary: "Settlement batches", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/payouts": {
-        post: { tags: ["Payouts"], operationId: "createPayout", summary: "Pay out to a verified beneficiary", parameters: [idem], responses: { "201": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Payouts"], operationId: "createPayout", summary: "Pay out to a verified beneficiary", description: "When the organization's two-person approval policy applies, no money moves: the response is 202 with an approval id, and the payout runs once a second team member approves it in the dashboard.", parameters: [idem], responses: { "201": ok({ type: "object" }), "202": ok({ type: "object" }), ...errors } },
         get: { tags: ["Payouts"], operationId: "listPayouts", summary: "List payouts", responses: { "200": ok({ type: "object" }), ...errors } },
       },
+      "/payment_methods": {
+        get: { tags: ["Recurring billing"], operationId: "listPaymentMethods", summary: "Saved payment methods (filter with ?customer_email=)", responses: { "200": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Recurring billing"], operationId: "importPaymentMethod", summary: "Save a reusable token obtained through a provider's own SDK (provider, token, customer_email; optional brand, last4, exp_month, exp_year). Card numbers are never accepted.", responses: { "201": ok({ type: "object" }), ...errors } },
+      },
+      "/payment_methods/{id}/revoke": { post: { tags: ["Recurring billing"], operationId: "revokePaymentMethod", summary: "Destroy a saved payment method; it can never be charged again", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
+      "/plans": {
+        get: { tags: ["Recurring billing"], operationId: "listPlans", summary: "Billing plans", responses: { "200": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Recurring billing"], operationId: "createPlan", summary: "Create a plan (name, amount, currency, interval day|week|month|year, interval_count, trial_days)", responses: { "201": ok({ type: "object" }), ...errors } },
+      },
+      "/subscriptions": {
+        get: { tags: ["Recurring billing"], operationId: "listSubscriptions", summary: "Subscriptions", responses: { "200": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Recurring billing"], operationId: "createSubscription", summary: "Subscribe a customer (plan_id, payment_method_id, optional trial_days, metadata). Renewals are charged at the provider that issued the saved method; failed renewals retry on days 1, 3, 5 and 7 when the failure can recover.", responses: { "201": ok({ type: "object" }), ...errors } },
+      },
+      "/subscriptions/{id}": { get: { tags: ["Recurring billing"], operationId: "getSubscription", summary: "A subscription with its invoices", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
+      "/subscriptions/{id}/cancel": { post: { tags: ["Recurring billing"], operationId: "cancelSubscription", summary: "Cancel now, or at the end of the current period with at_period_end: true", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
+      "/recipients": {
+        get: { tags: ["Marketplace"], operationId: "listRecipients", summary: "Marketplace recipients with their balances", responses: { "200": ok({ type: "object", properties: { recipients: { type: "array", items: ref("Recipient") } } }), ...errors } },
+        post: {
+          tags: ["Marketplace"],
+          operationId: "createRecipient",
+          summary: "Add a seller or partner who receives shares of payments",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["name"],
+                  properties: {
+                    name: { type: "string" },
+                    email: { type: "string", format: "email" },
+                    beneficiary_id: { type: "string", description: "An existing payout account; or send payout_account" },
+                    payout_account: { type: "object", required: ["bank_name", "account_number", "currency"], properties: { holder_name: { type: "string" }, bank_name: { type: "string" }, bank_code: { type: "string" }, account_number: { type: "string", description: "Stored encrypted; only the last 4 digits are ever returned" }, currency: { type: "string" }, country: { type: "string" }, type: { enum: ["bank_account", "mobile_money"] } } },
+                    metadata: { type: "object" },
+                  },
+                },
+              },
+            },
+          },
+          responses: { "201": ok({ type: "object", properties: { recipient: ref("Recipient") } }), ...errors },
+        },
+      },
+      "/recipients/{id}": { get: { tags: ["Marketplace"], operationId: "getRecipient", summary: "A recipient and its balance", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object", properties: { recipient: ref("Recipient") } }), ...errors } } },
+      "/recipients/{id}/payouts": {
+        post: {
+          tags: ["Marketplace"],
+          operationId: "payRecipient",
+          summary: "Pay a recipient from its balance to its payout account. Omit amount to pay out everything available after the payout fee. Send Idempotency-Key; returns 202 when two-person approval applies.",
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+          requestBody: { content: { "application/json": { schema: { type: "object", properties: { amount: { type: "integer" }, narration: { type: "string" } } } } } },
+          responses: { "201": ok({ type: "object" }), "202": ok({ type: "object" }), ...errors },
+        },
+      },
+      "/recipients/{id}/disable": { post: { tags: ["Marketplace"], operationId: "disableRecipient", summary: "Stop new shares and payouts for a recipient", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
+      "/recipients/{id}/enable": { post: { tags: ["Marketplace"], operationId: "enableRecipient", summary: "Re-enable a recipient", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
       "/customers": { get: { tags: ["Customers"], operationId: "listCustomers", summary: "Customers built from payment activity", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/reference": { get: { tags: ["Reference"], operationId: "referenceData", security: [], summary: "ISO currencies, countries, methods and states", responses: { "200": ok({ type: "object" }) } } },
+      "/whoami": { get: { tags: ["Reference"], operationId: "whoami", summary: "The calling key's environment, scope and the client IP address USOPGRID sees (use it before enabling an IP allowlist)", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/health": { get: { tags: ["Reference"], operationId: "health", security: [], summary: "Liveness", responses: { "200": ok({ type: "object" }) } } },
     },
     webhooks: {
@@ -149,6 +205,27 @@ export function buildOpenApiSpec(serverUrl: string) {
             return_url: { type: "string", format: "uri" },
             description: { type: "string" },
             metadata: { type: "object", additionalProperties: { type: ["string", "number", "boolean"] }, description: "Up to 50 keys. In sandbox, `simulate` drives outcomes." },
+            save_payment_method: { type: "boolean", description: "Keep the payment method for future charges (needs customer.email)." },
+            splits: {
+              type: "array",
+              maxItems: 10,
+              description: "Marketplace shares. Each names a recipient and exactly one of amount (minor units) or percent (up to two decimals, rounded down). Shares come out of your net after USOPGRID fees and must fit within it; the rest stays with you. Refunds reverse shares in proportion.",
+              items: { type: "object", required: ["recipient"], properties: { recipient: { type: "string", description: "rcp_…" }, amount: { type: "integer" }, percent: { type: "number" } } },
+            },
+          },
+        },
+        Recipient: {
+          type: "object",
+          properties: {
+            id: { type: "string" },
+            object: { const: "recipient" },
+            name: { type: "string" },
+            email: { type: ["string", "null"] },
+            currency: { type: "string" },
+            status: { enum: ["active", "disabled"] },
+            balance: { type: "integer", description: "Shares received less reversals and payouts, in minor units. Negative when a refund came after a payout." },
+            payout_account: { type: ["object", "null"], properties: { name: { type: "string" }, bank: { type: "string" }, account: { type: "string", description: "Masked" }, country: { type: ["string", "null"] } } },
+            created_at: { type: "string", format: "date-time" },
           },
         },
         Payment: {
@@ -172,6 +249,7 @@ export function buildOpenApiSpec(serverUrl: string) {
             outcome_unknown: { type: "boolean", description: "True while USOPGRID is confirming an ambiguous provider response. Do not retry with a new reference." },
             next_action: { type: ["object", "null"] },
             failure: { type: ["object", "null"], properties: { category: { type: "string" }, code: { type: "string" }, message: { type: "string" }, retryable: { type: "boolean" } } },
+            splits: { type: "array", items: { type: "object", properties: { recipient: { type: "string" }, amount: { type: "integer" }, percent: { type: ["number", "null"] }, allocated: { type: ["integer", "null"], description: "Set when the payment succeeds" }, reversed: { type: "integer" } } } },
             created_at: { type: "string", format: "date-time" },
           },
         },

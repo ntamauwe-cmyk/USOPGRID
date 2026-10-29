@@ -17,6 +17,7 @@ import type { Id } from "./_generated/dataModel";
 import { resolveConnection, parsePlatformConnectionId } from "./connections";
 import type { ProviderEvent } from "./providers/types";
 import { txStateForCharge } from "./orchestration/engine";
+import { savePaymentMethodFromAction } from "./billing";
 
 const MAX_BODY_BYTES = 1_000_000;
 
@@ -190,6 +191,22 @@ export const receive = httpAction(async (ctx, request) => {
             eventId: e.eventId,
           });
           outcome = r.resolution;
+          // First successful payment with "save payment method": keep the provider's reusable token.
+          if (e.reusableToken && st === "SUCCESSFUL" && txn.savePaymentMethod && txn.customerEmail) {
+            try {
+              await savePaymentMethodFromAction(ctx, {
+                orgId: txn.orgId,
+                environment: txn.environment,
+                customerEmail: txn.customerEmail,
+                providerId,
+                connectionId: connectionKey,
+                token: e.reusableToken,
+                sourceTransactionId: txn.transactionId,
+              });
+            } catch (err) {
+              detail = `payment method not saved: ${err instanceof Error ? err.message : "error"}`;
+            }
+          }
         }
       } else if (e.type === "refund") {
         const pending = await ctx.runQuery(internal.providerWebhooks.pendingRefundsInternal, { transactionId: txn._id });

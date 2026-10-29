@@ -28,14 +28,14 @@ describe("risk engine", () => {
   });
 
   test("high amount triggers REVIEW band", () => {
-    const r = evaluatePaymentRisk(input({ amountMinor: 6_000_000 })); // ₦60,000
+    const r = evaluatePaymentRisk(input({ amountMinor: 600_000_000 })); // ₦6,000,000 (no FX: NGN fallback)
     expect(r.reasons).toContain("amount_high");
     expect(["REVIEW", "HOLD"]).toContain(r.decision);
   });
 
   test("very high amount contributes more than high amount", () => {
-    const hi = evaluatePaymentRisk(input({ amountMinor: 6_000_000 }));
-    const vhi = evaluatePaymentRisk(input({ amountMinor: 25_000_000 }));
+    const hi = evaluatePaymentRisk(input({ amountMinor: 600_000_000 }));
+    const vhi = evaluatePaymentRisk(input({ amountMinor: 2_600_000_000 }));
     expect(vhi.score).toBeGreaterThan(hi.score);
     expect(vhi.reasons).toContain("amount_very_high");
   });
@@ -87,7 +87,7 @@ describe("risk engine", () => {
   });
 
   test("every decision comes with explainable reasons when score > 0", () => {
-    const r = evaluatePaymentRisk(input({ amountMinor: 6_000_000 }));
+    const r = evaluatePaymentRisk(input({ amountMinor: 600_000_000 }));
     expect(r.reasons.length).toBeGreaterThan(0);
   });
 });
@@ -104,6 +104,18 @@ describe("risk engine — global amount normalization", () => {
   test("without an FX conversion non-NGN amounts are not mis-scored", () => {
     const r = evaluatePaymentRisk(input({ currency: "IDR", amountMinor: 50_000_000 }));
     expect(r.reasons).not.toContain("amount_high");
+    expect(r.reasons).not.toContain("amount_very_high");
+  });
+
+  test("regression: an ordinary ₦500,000 business payment is not flagged when FX is unavailable", () => {
+    const r = evaluatePaymentRisk(input({ amountMinor: 50_000_000 }));
+    expect(r.reasons).not.toContain("amount_high");
+    expect(r.reasons).not.toContain("amount_very_high");
+    expect(r.decision).toBe("ALLOW");
+  });
+  test("non-USD/NGN amounts without FX are recorded as unassessed, not guessed", () => {
+    const r = evaluatePaymentRisk(input({ currency: "KES", amountMinor: 999_999_999 }));
+    expect(r.reasons).toContain("amount_unassessed_no_fx");
     expect(r.reasons).not.toContain("amount_very_high");
   });
 });

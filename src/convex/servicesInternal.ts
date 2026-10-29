@@ -38,9 +38,13 @@ export const insertApiKeyInternal = internalMutation({
     prefix: v.string(),
     hash: v.string(),
     userId: v.id("users"),
+    scope: v.optional(v.union(v.literal("full"), v.literal("read_only"))),
+    allowedIps: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
     return ctx.db.insert("apiKeys", {
+      scope: args.scope ?? "full",
+      allowedIps: args.allowedIps ?? [],
       orgId: args.orgId,
       name: args.name,
       environment: args.environment,

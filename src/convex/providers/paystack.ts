@@ -94,7 +94,7 @@ export const paystackAdapter: ProviderAdapter = {
     countries: ["NG", "GH", "ZA", "KE", "CI", "EG", "RW"],
     currencies: ["NGN", "GHS", "ZAR", "KES", "USD", "XOF", "EGP", "RWF"],
     methods: ["card", "bank_transfer", "ussd", "mobile_money", "qr", "open_banking"],
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true, recurring: true },
     payoutCurrencies: ["NGN", "GHS", "ZAR", "KES"],
     limits: { NGN: { minMinor: 5_000 }, GHS: { minMinor: 10 }, KES: { minMinor: 300 } },
     pricing: { pctBps: 150, fixedMinor: 10_000, fixedCurrency: "NGN", capMinor: 200_000, notes: "Nigeria local: 1.5% + ₦100 (waived < ₦2,500), capped at ₦2,000." },
@@ -123,7 +123,8 @@ export const paystackAdapter: ProviderAdapter = {
       });
       if (o.kind === "response" && o.status === 200 && get(o.json, "status") === true) return mapTxn(o.json);
       if (o.kind === "response" && o.status === 400) {
-        return { status: "declined", failure: failure("issuer_decline", "declined", str(o.json, "message") ?? "Declined") };
+        const msg = str(o.json, "message") ?? str(o.json, "data.gateway_response") ?? "Declined";
+        return { status: "declined", failure: failure(/insufficient/i.test(msg) ? "insufficient_funds" : "issuer_decline", /insufficient/i.test(msg) ? "insufficient_funds" : "declined", msg) };
       }
       const f = classifyHttpFailure(o, NAME);
       return f ? { status: "failed", failure: f } : { status: "unknown", failure: unknownOutcome(o, NAME) };
@@ -242,7 +243,19 @@ export const paystackAdapter: ProviderAdapter = {
       currency: str(d, "currency"),
       occurredAt: Date.parse(str(d, "paid_at") ?? str(d, "created_at") ?? "") || undefined,
     };
-    if (type === "charge.success") return [{ ...ev, type: "payment", status: "successful" }];
+    if (type === "charge.success") {
+      // A reusable card authorization comes back with the first successful charge.
+      const auth = get(d, "authorization");
+      const reusable = get(auth, "reusable") === true && str(auth, "authorization_code")?.startsWith("AUTH_");
+      return [{
+        ...ev,
+        type: "payment",
+        status: "successful",
+        reusableToken: reusable
+          ? { token: str(auth, "authorization_code")!, brand: str(auth, "brand") ?? str(auth, "card_type"), last4: str(auth, "last4"), expMonth: Number(str(auth, "exp_month")) || undefined, expYear: Number(str(auth, "exp_year")) || undefined }
+          : undefined,
+      }];
+    }
     if (type === "charge.failed") return [{ ...ev, type: "payment", status: "declined", failure: failure("issuer_decline", "declined", str(d, "gateway_response") ?? "Declined") }];
     if (type === "refund.processed") return [{ ...ev, type: "refund", status: "refunded", providerReference: str(d, "transaction_reference") ?? ref }];
     if (type === "transfer.success" || type === "transfer.failed" || type === "transfer.reversed") {

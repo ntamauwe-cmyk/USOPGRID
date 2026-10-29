@@ -30,10 +30,14 @@ import { fingerprint } from "./lib/idempotency";
 import { listDescriptors, getAdapter, PAYMENT_METHODS } from "./providers/index";
 import { route as routePayment } from "./orchestration/router";
 import { STATE_LABELS } from "./orchestration/states";
-import type { ProcessResult, TransactionSummary } from "./payments";
+import { splitSummaries, type ProcessResult, type TransactionSummary } from "./payments";
+import { parseSplitInputs, SplitError } from "./lib/splits";
+import { payRecipient, type RecipientView } from "./recipients";
+import { ConvexError } from "convex/values";
 import type { RoutingContext } from "./connections";
 import { CURRENCIES, COUNTRIES } from "../lib/geo";
 import { buildOpenApiSpec } from "./lib/openapi";
+import { approvalGate, prepareBeneficiary } from "./payouts";
 
 type Handler = (ctx: ActionCtx, request: Request, key: AuthedKey, requestId: string) => Promise<Response>;
 
@@ -44,6 +48,9 @@ function endpoint(routeName: string, fn: Handler) {
     let res: Response;
     try {
       key = await authenticateRequest(ctx, request);
+      if (key.scope === "read_only" && !routeName.startsWith("GET ")) {
+        throw new ApiError("authorization_error", "This API key is read-only. Use a full-access key to create or change data.");
+      }
       res = await fn(ctx, request, key, requestId);
     } catch (err) {
       res = handleApiError(err, requestId);
@@ -115,6 +122,7 @@ function paymentJson(t: TransactionSummary) {
     outcome_unknown: t.outcomeUnknown,
     next_action: t.nextAction,
     failure: t.failure,
+    splits: t.splits ?? [],
     created_at: new Date(t.createdAt).toISOString(),
   };
 }
@@ -141,6 +149,7 @@ function txnJson(t: Doc<"transactions">) {
       ? { category: t.failureCategory ?? "", code: t.failureCode, message: t.failureMessage ?? "", retryable: t.failureRetryable ?? false }
       : null,
     createdAt: t.createdAt,
+    splits: splitSummaries(t),
   });
 }
 
@@ -174,10 +183,19 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
   const customerPhone = optString(customer, 32, "phone") ?? optString(body, 32, "customer_phone", "customerPhone");
   const reference = optString(body, 120, "reference") ?? `ref_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
   const metadata = sanitizeMetadata(pick(body, "metadata"));
+  const savePaymentMethod = pick(body, "save_payment_method", "savePaymentMethod") === true;
+  let splits;
+  try {
+    splits = parseSplitInputs(pick(body, "splits"));
+  } catch (err) {
+    if (err instanceof SplitError) throw new ApiError("validation_error", err.message);
+    throw err;
+  }
 
   if (!Number.isSafeInteger(amountMinor) || (amountMinor as number) <= 0) {
     throw new ApiError("validation_error", "amount must be a positive integer in the currency's minor unit (e.g. cents).");
   }
+  if (savePaymentMethod && !customerEmail) throw new ApiError("validation_error", "save_payment_method needs customer.email, so the saved method belongs to a customer.");
   if (!/^[A-Z]{3}$/.test(currency)) throw new ApiError("validation_error", "currency must be a 3-letter ISO 4217 code.");
   if (!(PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
     throw new ApiError("validation_error", `payment_method must be one of: ${PAYMENT_METHODS.join(", ")}.`);
@@ -206,6 +224,8 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
     metadata,
     requestId,
     actor: key.prefix,
+    savePaymentMethod: savePaymentMethod || undefined,
+    splits,
   };
 
   const idemKey = request.headers.get("Idempotency-Key");
@@ -217,7 +237,7 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
   if (idemKey.length > 255) throw new ApiError("validation_error", "Idempotency-Key must be at most 255 characters.");
 
   // Fingerprint covers client-supplied fields only (never server-generated ones).
-  const fp = await fingerprint({ amountMinor, currency, paymentMethod, country: country ?? null, reference: pick(body, "reference") ?? null, customerEmail: customerEmail ?? null, metadata: metadata ?? null, env: key.environment });
+  const fp = await fingerprint({ amountMinor, currency, paymentMethod, country: country ?? null, reference: pick(body, "reference") ?? null, customerEmail: customerEmail ?? null, metadata: metadata ?? null, env: key.environment, savePaymentMethod, splits: splits ?? null });
   const acquired = await ctx.runMutation(internal.lib.idempotency.acquireInternal, { orgId, key: idemKey, fp });
   if (acquired.type === "replay") return jsonOk(acquired.responseBody, acquired.statusCode, requestId);
   if (acquired.type === "conflict") throw new ApiError("idempotency_conflict", "This Idempotency-Key was already used with a different request body.");
@@ -472,6 +492,19 @@ export const createPayout = endpoint("POST /payouts", async (ctx, request, key, 
     beneficiary = null;
   }
   if (!beneficiary || beneficiary.orgId !== key.orgId) throw new ApiError("not_found", "Beneficiary not found in this organization.");
+  // Two-person approval: the payout waits for a second team member in the dashboard.
+  const approvalId = await approvalGate(ctx, {
+    orgId: key.orgId as Id<"organizations">,
+    beneficiary,
+    amountMinor: amountMinor as number,
+    narration: optString(body, 140, "narration"),
+    requestedBy: `api:${key.prefix}`,
+    requestedByLabel: `API key ${key.prefix}`,
+    idempotencyKey: request.headers.get("Idempotency-Key") ? `payout_${request.headers.get("Idempotency-Key")}` : undefined,
+  });
+  if (approvalId) {
+    return jsonOk({ payout: null, approval: { id: approvalId, status: "pending_approval", message: "This payout needs a second approver in the USOPGRID dashboard (Approvals) before money moves." } }, 202, requestId);
+  }
   const result = (await ctx.runAction(internal.payouts.payoutInternal, {
     orgId: key.orgId as Id<"organizations">,
     beneficiaryId: beneficiaryId as Id<"beneficiaries">,
@@ -555,6 +588,259 @@ export const listCustomers = endpoint("GET /customers", async (ctx, request, key
 // ---------------------------------------------------------------------------
 // Public (unauthenticated) endpoints
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Recurring billing: saved payment methods, plans, subscriptions
+// ---------------------------------------------------------------------------
+const billingError = (err: unknown): never => {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = /^(?:Uncaught ConvexError: )?(VALIDATION_ERROR|NOT_FOUND|CONFLICT|FORBIDDEN): (.*)$/s.exec(msg);
+  if (m) throw new ApiError(m[1] === "NOT_FOUND" ? "not_found" : m[1] === "CONFLICT" ? "conflict" : m[1] === "FORBIDDEN" ? "authorization_error" : "validation_error", m[2]);
+  throw err;
+};
+
+export const listPaymentMethods = endpoint("GET /payment_methods", async (ctx, request, key, requestId) => {
+  const email = new URL(request.url).searchParams.get("customer_email") ?? undefined;
+  const rows = await ctx.runQuery(internal.billing.listPaymentMethodsInternal, { orgId: key.orgId as Id<"organizations">, customerEmail: email });
+  return jsonOk({ payment_methods: rows.filter((r) => r.livemode === (key.environment === "production")) }, 200, requestId);
+});
+
+export const createPaymentMethod = endpoint("POST /payment_methods", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  const provider = String(pick(body, "provider") ?? "");
+  const token = String(pick(body, "token") ?? "");
+  const email = optString(body, 254, "customer_email")?.toLowerCase();
+  if (!provider || !token || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError("validation_error", "provider, token and a valid customer_email are required.");
+  const r = await ctx.runAction(internal.billing.importPaymentMethodInternal, {
+    orgId: key.orgId as Id<"organizations">,
+    environment: key.environment,
+    providerId: provider,
+    token,
+    customerEmail: email,
+    brand: optString(body, 24, "brand"),
+    last4: optString(body, 4, "last4"),
+    expMonth: typeof body.exp_month === "number" ? body.exp_month : undefined,
+    expYear: typeof body.exp_year === "number" ? body.exp_year : undefined,
+  });
+  if (r.error || !r.methodId) throw new ApiError("validation_error", r.error ?? "Could not save the payment method.");
+  const rows = await ctx.runQuery(internal.billing.listPaymentMethodsInternal, { orgId: key.orgId as Id<"organizations">, customerEmail: email });
+  return jsonOk({ payment_method: rows.find((p) => p.id === r.methodId) ?? { id: r.methodId } }, 201, requestId);
+});
+
+export const paymentMethodAction = endpoint("POST /payment_methods/:id/revoke", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts[4] !== "revoke" || parts.length !== 5) throw new ApiError("not_found", "Unknown endpoint.");
+  const r = await ctx.runMutation(internal.billing.revokePaymentMethodInternal, { orgId: key.orgId as Id<"organizations">, methodId: parts[3], actor: key.prefix });
+  if (!r) throw new ApiError("not_found", "No such payment method in this organization.");
+  return jsonOk({ payment_method: r }, 200, requestId);
+});
+
+export const listPlans = endpoint("GET /plans", async (ctx, _request, key, requestId) =>
+  jsonOk({ plans: await ctx.runQuery(internal.billing.listPlansInternal, { orgId: key.orgId as Id<"organizations"> }) }, 200, requestId),
+);
+
+export const createPlan = endpoint("POST /plans", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  try {
+    const plan = await ctx.runMutation(internal.billing.createPlanInternal, {
+      orgId: key.orgId as Id<"organizations">,
+      name: String(pick(body, "name") ?? ""),
+      amountMinor: Number(pick(body, "amount")),
+      currency: String(pick(body, "currency") ?? "").toUpperCase(),
+      interval: String(pick(body, "interval") ?? "") as "day" | "week" | "month" | "year",
+      intervalCount: Number(pick(body, "interval_count") ?? 1),
+      trialDays: pick(body, "trial_days") === undefined ? undefined : Number(pick(body, "trial_days")),
+      actor: key.prefix,
+    });
+    return jsonOk({ plan }, 201, requestId);
+  } catch (err) {
+    return billingError(err);
+  }
+});
+
+export const listSubscriptions = endpoint("GET /subscriptions", async (ctx, request, key, requestId) => {
+  const limit = Math.min(Number(new URL(request.url).searchParams.get("limit") ?? 50) || 50, 200);
+  const rows = await ctx.runQuery(internal.billing.listSubscriptionsInternal, { orgId: key.orgId as Id<"organizations">, limit });
+  return jsonOk({ subscriptions: rows.filter((r) => r.livemode === (key.environment === "production")) }, 200, requestId);
+});
+
+export const createSubscription = endpoint("POST /subscriptions", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  const orgId = key.orgId as Id<"organizations">;
+  try {
+    const sub = await ctx.runMutation(internal.billing.createSubscriptionInternal, {
+      orgId,
+      merchantId: await resolvePrimaryMerchant(ctx, orgId),
+      environment: key.environment,
+      planId: String(pick(body, "plan_id", "plan") ?? ""),
+      paymentMethodId: String(pick(body, "payment_method_id", "payment_method") ?? ""),
+      customerName: optString(body, 200, "customer_name"),
+      trialDays: pick(body, "trial_days") === undefined ? undefined : Number(pick(body, "trial_days")),
+      metadata: sanitizeMetadata(pick(body, "metadata")),
+      actor: key.prefix,
+    });
+    return jsonOk({ subscription: sub }, 201, requestId);
+  } catch (err) {
+    return billingError(err);
+  }
+});
+
+export const getSubscription = endpoint("GET /subscriptions/:id", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts.length !== 4) throw new ApiError("not_found", "Unknown endpoint.");
+  const s = await ctx.runQuery(internal.billing.getSubscriptionInternal, { orgId: key.orgId as Id<"organizations">, subscriptionId: parts[3] });
+  if (!s) throw new ApiError("not_found", "No such subscription in this organization.");
+  return jsonOk({ subscription: s }, 200, requestId);
+});
+
+export const subscriptionAction = endpoint("POST /subscriptions/:id/cancel", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts[4] !== "cancel" || parts.length !== 5) throw new ApiError("not_found", "Unknown endpoint.");
+  const body = await readJsonBody(request).catch(() => ({}) as Record<string, unknown>);
+  try {
+    const s = await ctx.runMutation(internal.billing.cancelSubscriptionInternal, { orgId: key.orgId as Id<"organizations">, subscriptionId: parts[3], atPeriodEnd: pick(body, "at_period_end") === true, actor: key.prefix });
+    return jsonOk({ subscription: s }, 200, requestId);
+  } catch (err) {
+    return billingError(err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Marketplace recipients and their payouts
+// ---------------------------------------------------------------------------
+function recipientJson(r: RecipientView) {
+  return {
+    id: r.id,
+    object: "recipient",
+    name: r.name,
+    email: r.email,
+    currency: r.currency,
+    status: r.status,
+    balance: r.balanceMinor,
+    payout_account: r.payoutAccount,
+    metadata: r.metadata,
+    created_at: new Date(r.createdAt).toISOString(),
+  };
+}
+
+export const listRecipients = endpoint("GET /recipients", async (ctx, request, key, requestId) => {
+  const limit = Number(new URL(request.url).searchParams.get("limit") ?? 50) || 50;
+  const rows: RecipientView[] = await ctx.runQuery(internal.recipients.listInternal, { orgId: key.orgId as Id<"organizations">, limit });
+  return jsonOk({ recipients: rows.map(recipientJson) }, 200, requestId);
+});
+
+export const createRecipient = endpoint("POST /recipients", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  const name = optString(body, 120, "name");
+  if (!name) throw new ApiError("validation_error", "name is required.");
+  const email = optString(body, 254, "email");
+  const metadata = sanitizeMetadata(pick(body, "metadata"));
+  const acct = pick<Record<string, unknown>>(body, "payout_account", "payoutAccount");
+  const beneficiaryRef = optString(body, 64, "beneficiary_id", "beneficiaryId");
+  if (!!acct === !!beneficiaryRef) throw new ApiError("validation_error", "Send either payout_account (new bank or wallet details) or beneficiary_id (an existing payout account).");
+  const orgId = key.orgId as Id<"organizations">;
+  try {
+    let beneficiaryId: Id<"beneficiaries">;
+    if (acct) {
+      if (typeof acct !== "object" || Array.isArray(acct)) throw new ApiError("validation_error", "payout_account must be an object.");
+      const accountType = optString(acct, 20, "type", "account_type");
+      if (accountType !== undefined && accountType !== "bank_account" && accountType !== "mobile_money") throw new ApiError("validation_error", "payout_account.type must be bank_account or mobile_money.");
+      const prepared = await prepareBeneficiary(orgId, key.environment, {
+        name: optString(acct, 120, "holder_name", "name") ?? name,
+        bankName: optString(acct, 120, "bank_name", "bankName") ?? "",
+        bankCode: optString(acct, 20, "bank_code", "bankCode"),
+        accountNumber: optString(acct, 40, "account_number", "accountNumber") ?? "",
+        currency: (optString(acct, 3, "currency") ?? "").toUpperCase(),
+        country: optString(acct, 2, "country"),
+        accountType: accountType as "bank_account" | "mobile_money" | undefined,
+      });
+      beneficiaryId = (await ctx.runMutation(internal.payouts.insertBeneficiaryInternal, prepared))._id;
+    } else {
+      const b = await ctx.runQuery(internal.apiInternal.beneficiaryByIdInternal, { beneficiaryId: beneficiaryRef as Id<"beneficiaries"> }).catch(() => null);
+      if (!b || b.orgId !== orgId) throw new ApiError("not_found", "Beneficiary not found in this organization.");
+      beneficiaryId = b._id;
+    }
+    const r: RecipientView = await ctx.runMutation(internal.recipients.createInternal, { orgId, name, email, beneficiaryId, metadata, actor: key.prefix });
+    return jsonOk({ recipient: recipientJson(r) }, 201, requestId);
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    return billingError(err instanceof ConvexError ? new Error(String(err.data)) : err);
+  }
+});
+
+export const getRecipient = endpoint("GET /recipients/:id", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts.length !== 4) throw new ApiError("not_found", "Unknown endpoint.");
+  const r: RecipientView | null = await ctx.runQuery(internal.recipients.getInternal, { orgId: key.orgId as Id<"organizations">, recipientId: parts[3] });
+  if (!r) throw new ApiError("not_found", "Recipient not found.");
+  return jsonOk({ recipient: recipientJson(r) }, 200, requestId);
+});
+
+/** POST /recipients/:id/payouts · /disable · /enable */
+export const recipientAction = endpoint("POST /recipients/:id/action", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  const verb = parts[4];
+  if (parts.length !== 5 || !["payouts", "disable", "enable"].includes(verb)) throw new ApiError("not_found", "Unknown endpoint.");
+  const orgId = key.orgId as Id<"organizations">;
+  const r: RecipientView | null = await ctx.runQuery(internal.recipients.getInternal, { orgId, recipientId: parts[3] });
+  if (!r) throw new ApiError("not_found", "Recipient not found.");
+  try {
+    if (verb !== "payouts") {
+      await ctx.runMutation(internal.recipients.setStatusInternal, { orgId, recipientDocId: r._id, status: verb === "enable" ? "active" : "disabled", actor: key.prefix });
+      const after: RecipientView | null = await ctx.runQuery(internal.recipients.getInternal, { orgId, recipientId: parts[3] });
+      return jsonOk({ recipient: recipientJson(after!) }, 200, requestId);
+    }
+    const body = await readJsonBody(request).catch(() => ({}) as Record<string, unknown>);
+    const amount = pick<number>(body, "amount");
+    if (amount !== undefined && (!Number.isSafeInteger(amount) || amount <= 0)) throw new ApiError("validation_error", "amount must be a positive integer (minor units); omit it to pay out the full available balance.");
+    const narration = optString(body, 140, "narration");
+    const pay = async (): Promise<{ status: number; body: unknown }> => {
+      const out = await payRecipient(ctx, {
+        orgId,
+        recipientDocId: r._id,
+        amountMinor: amount,
+        narration,
+        requestedBy: `api:${key.prefix}`,
+        requestedByLabel: `API key ${key.prefix}`,
+        idempotencyKey: idem ? `recipient_payout_${r.id}_${idem}` : undefined,
+        actor: key.prefix,
+      });
+      if (out.kind === "pending_approval") {
+        return { status: 202, body: { payout: null, approval: { id: out.approvalId, status: "pending_approval", amount: out.amountMinor, message: "This payout needs a second approver in the USOPGRID dashboard (Approvals) before money moves." } } };
+      }
+      return { status: 201, body: { payout: { id: out.payoutId, status: out.status, amount: out.amountMinor, currency: r.currency, recipient: r.id } } };
+    };
+    // "Pay the whole balance" depends on the balance, so retries must replay
+    // the first response rather than recompute it.
+    const idem = request.headers.get("Idempotency-Key");
+    if (!idem) {
+      const res = await pay();
+      return jsonOk(res.body, res.status, requestId);
+    }
+    if (idem.length > 255) throw new ApiError("validation_error", "Idempotency-Key must be at most 255 characters.");
+    const fp = await fingerprint({ recipient: r.id, amount: amount ?? null, narration: narration ?? null, kind: "recipient_payout" });
+    const acquired = await ctx.runMutation(internal.lib.idempotency.acquireInternal, { orgId, key: `recipient_payout_${r.id}_${idem}`, fp });
+    if (acquired.type === "replay") return jsonOk(acquired.responseBody, acquired.statusCode, requestId);
+    if (acquired.type === "conflict") throw new ApiError("idempotency_conflict", "This Idempotency-Key was already used with a different request body.");
+    if (acquired.type === "in_progress") throw new ApiError("conflict", "An identical request is currently in progress. Retry shortly.", true, { retryAfterSec: 2 });
+    try {
+      const res = await pay();
+      await ctx.runMutation(internal.lib.idempotency.completeInternal, { recordId: acquired.recordId as Id<"idempotencyKeys">, response: { statusCode: res.status, body: res.body }, transactionId: undefined });
+      return jsonOk(res.body, res.status, requestId);
+    } catch (err) {
+      await ctx.runMutation(internal.lib.idempotency.failInternal, { recordId: acquired.recordId as Id<"idempotencyKeys"> });
+      throw err;
+    }
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
+    return billingError(err instanceof ConvexError ? new Error(String(err.data)) : err);
+  }
+});
+
+/** Who is calling: key prefix, environment, scope and the client address USOPGRID sees (for IP allowlists). */
+export const whoami = endpoint("GET /whoami", async (_ctx, _request, key, requestId) =>
+  jsonOk({ key: key.prefix, environment: key.environment, scope: key.scope, client_ip: key.clientIp }, 200, requestId),
+);
+
 export const health = httpAction(async (_ctx, request) =>
   jsonOk({ service: "usopgrid-api", version: "v1", api_version: API_VERSION, time: new Date().toISOString() }, 200, requestIdFrom(request)),
 );

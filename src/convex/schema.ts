@@ -44,6 +44,8 @@ export const PERMISSIONS = {
   ANALYTICS_VIEW: "analytics:view",
   RISK_MANAGE: "risk:manage",
   SECURITY_MANAGE: "security:manage",
+  /** Second approver for payouts (two-person rule). */
+  PAYOUTS_APPROVE: "payouts:approve",
 } as const;
 
 const P = PERMISSIONS;
@@ -51,7 +53,7 @@ export const ROLE_PERMISSIONS: Record<Role, string[]> = {
   owner: Object.values(PERMISSIONS),
   admin: Object.values(PERMISSIONS).filter((p) => p !== P.SECURITY_MANAGE),
   developer: [P.KEYS_MANAGE, P.WEBHOOKS_MANAGE, P.PAYMENTS_CREATE, P.PROVIDERS_MANAGE, P.ROUTING_MANAGE, P.ANALYTICS_VIEW],
-  finance: [P.SETTLEMENT_VIEW, P.LEDGER_VIEW, P.RECON_MANAGE, P.REFUNDS_CREATE, P.AUDIT_VIEW, P.ANALYTICS_VIEW],
+  finance: [P.SETTLEMENT_VIEW, P.LEDGER_VIEW, P.RECON_MANAGE, P.REFUNDS_CREATE, P.AUDIT_VIEW, P.ANALYTICS_VIEW, P.PAYOUTS_APPROVE],
   operations: [P.SETTLEMENT_VIEW, P.LEDGER_VIEW, P.ROUTING_MANAGE, P.ANALYTICS_VIEW, P.REFUNDS_CREATE],
   risk_compliance: [P.RISK_MANAGE, P.AUDIT_VIEW, P.ANALYTICS_VIEW, P.LEDGER_VIEW],
   viewer: [P.ANALYTICS_VIEW],
@@ -114,6 +116,13 @@ export const organizations = defineTable({
       ipAllowlist: v.optional(v.array(v.string())),
     }),
   ),
+  /** Two-person approval policy (see lib/approvals.ts). */
+  approvals: v.optional(
+    v.object({
+      payouts: v.union(v.literal("off"), v.literal("all"), v.literal("above")),
+      payoutThresholdUsd: v.optional(v.number()),
+    }),
+  ),
   /** Per-transaction ceiling in USD-equivalent minor units, enforced before routing. */
   maxTransactionMinor: v.optional(v.number()),
   createdByUserId: v.optional(v.id("users")),
@@ -171,6 +180,10 @@ export const apiKeys = defineTable({
   /** Set when the key was rotated: it keeps working until this time. */
   expiresAt: v.optional(v.number()),
   rotatedToKeyId: v.optional(v.string()),
+  /** Least privilege: read_only keys may call GET routes only. Absent = full. */
+  scope: v.optional(v.union(v.literal("full"), v.literal("read_only"))),
+  /** IPv4/IPv6 addresses or CIDR ranges allowed to use this key. Empty = any. */
+  allowedIps: v.optional(v.array(v.string())),
   lastUsedAt: v.optional(v.number()),
   // Per-key rate limiting window
   rateWindowCount: v.optional(v.number()),
@@ -225,6 +238,23 @@ export const transactions = defineTable({
   customerEmail: v.optional(v.string()),
   customerName: v.optional(v.string()),
   metadata: v.optional(v.any()),
+  /** Customer asked to keep this payment method for future charges. */
+  savePaymentMethod: v.optional(v.boolean()),
+  /** Set on subscription renewal charges. */
+  invoiceId: v.optional(v.id("invoices")),
+  /** Marketplace shares. allocatedMinor is set when the payment succeeds. */
+  splits: v.optional(
+    v.array(
+      v.object({
+        recipientId: v.id("recipients"),
+        recipientRef: v.string(),
+        amountMinor: v.number(),
+        percentBps: v.optional(v.number()),
+        allocatedMinor: v.optional(v.number()),
+        reversedMinor: v.optional(v.number()),
+      }),
+    ),
+  ),
   // Failure intelligence
   failureCategory: v.optional(v.string()),
   failureCode: v.optional(v.string()),
@@ -529,6 +559,8 @@ export const payouts = defineTable({
   orgId: v.id("organizations"),
   merchantId: v.id("merchants"),
   beneficiaryId: v.id("beneficiaries"),
+  /** Set when paying a marketplace recipient out of its own balance. */
+  recipientId: v.optional(v.id("recipients")),
   payoutId: v.string(), // po_...
   reference: v.string(), // idempotent merchant reference (unique per org)
   amountMinor: v.number(),
@@ -564,6 +596,27 @@ export const payouts = defineTable({
   .index("by_org_status_created", ["orgId", "status", "createdAt"])
   .index("by_status_updated", ["status", "updatedAt"])
   .index("by_rail_reference", ["railReference"]);
+
+// ---------------------------------------------------------------------------
+// Marketplace recipients — sellers or partners who receive shares of
+// payments. Each has its own ledger balance and is paid out to its own
+// beneficiary account.
+// ---------------------------------------------------------------------------
+export const recipients = defineTable({
+  orgId: v.id("organizations"),
+  recipientId: v.string(), // rcp_...
+  name: v.string(),
+  email: v.optional(v.string()),
+  beneficiaryId: v.id("beneficiaries"),
+  currency: v.string(),
+  status: v.union(v.literal("active"), v.literal("disabled")),
+  metadata: v.optional(v.any()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_recipient_id", ["recipientId"])
+  .index("by_org_created", ["orgId", "createdAt"])
+  .index("by_org_beneficiary", ["orgId", "beneficiaryId"]);
 
 // ---------------------------------------------------------------------------
 // Disputes — chargeback lifecycle per transaction.
@@ -889,6 +942,162 @@ export const orgInvitations = defineTable({
   .index("by_org", ["orgId"]);
 
 // Enterprise sales enquiries from the public website.
+// Recurring billing --------------------------------------------------------
+// Saved payment methods: provider-issued reusable tokens (sealed), bound to
+// the connection that issued them. Never card numbers.
+export const paymentMethods = defineTable({
+  orgId: v.id("organizations"),
+  environment: v.union(v.literal("sandbox"), v.literal("production")),
+  methodId: v.string(),
+  customerEmail: v.string(),
+  providerId: v.string(),
+  connectionId: v.string(),
+  sealedToken: v.string(),
+  tokenHash: v.string(),
+  brand: v.optional(v.string()),
+  last4: v.optional(v.string()),
+  expMonth: v.optional(v.number()),
+  expYear: v.optional(v.number()),
+  status: v.union(v.literal("active"), v.literal("revoked")),
+  sourceTransactionId: v.optional(v.string()),
+  createdAt: v.number(),
+  lastUsedAt: v.optional(v.number()),
+})
+  .index("by_method_id", ["methodId"])
+  .index("by_org_customer", ["orgId", "customerEmail"])
+  .index("by_org_token", ["orgId", "tokenHash"]);
+
+export const plans = defineTable({
+  orgId: v.id("organizations"),
+  planId: v.string(),
+  name: v.string(),
+  amountMinor: v.number(),
+  currency: v.string(),
+  interval: v.union(v.literal("day"), v.literal("week"), v.literal("month"), v.literal("year")),
+  intervalCount: v.number(),
+  trialDays: v.optional(v.number()),
+  active: v.boolean(),
+  createdAt: v.number(),
+})
+  .index("by_plan_id", ["planId"])
+  .index("by_org", ["orgId"]);
+
+export const subscriptions = defineTable({
+  orgId: v.id("organizations"),
+  merchantId: v.id("merchants"),
+  environment: v.union(v.literal("sandbox"), v.literal("production")),
+  subscriptionId: v.string(),
+  planId: v.string(),
+  customerEmail: v.string(),
+  customerName: v.optional(v.string()),
+  paymentMethodId: v.string(),
+  status: v.union(v.literal("trialing"), v.literal("active"), v.literal("past_due"), v.literal("unpaid"), v.literal("canceled")),
+  currentPeriodStart: v.number(),
+  currentPeriodEnd: v.number(),
+  anchorDay: v.number(),
+  nextChargeAt: v.number(),
+  failedAttempts: v.number(),
+  cancelAtPeriodEnd: v.boolean(),
+  canceledAt: v.optional(v.number()),
+  metadata: v.optional(v.any()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_subscription_id", ["subscriptionId"])
+  .index("by_org_created", ["orgId", "createdAt"])
+  .index("by_status_next", ["status", "nextChargeAt"]);
+
+export const invoices = defineTable({
+  orgId: v.id("organizations"),
+  invoiceId: v.string(),
+  subscriptionId: v.string(),
+  periodStart: v.number(),
+  periodEnd: v.number(),
+  amountMinor: v.number(),
+  currency: v.string(),
+  status: v.union(v.literal("open"), v.literal("processing"), v.literal("paid"), v.literal("failed"), v.literal("void")),
+  attempts: v.number(),
+  transactionId: v.optional(v.string()),
+  lastError: v.optional(v.string()),
+  createdAt: v.number(),
+  paidAt: v.optional(v.number()),
+})
+  .index("by_invoice_id", ["invoiceId"])
+  .index("by_subscription_period", ["subscriptionId", "periodStart"])
+  .index("by_status", ["status"]);
+
+// Bulk payouts: one uploaded file, many payouts.
+export const payoutBatches = defineTable({
+  orgId: v.id("organizations"),
+  name: v.string(),
+  status: v.union(v.literal("pending_approval"), v.literal("processing"), v.literal("completed"), v.literal("cancelled")),
+  count: v.number(),
+  totals: v.any(),
+  createdByUserId: v.id("users"),
+  createdByLabel: v.string(),
+  approvalId: v.optional(v.id("approvalRequests")),
+  submitted: v.optional(v.number()),
+  refused: v.optional(v.number()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+}).index("by_org_created", ["orgId", "createdAt"]);
+
+export const payoutBatchItems = defineTable({
+  batchId: v.id("payoutBatches"),
+  orgId: v.id("organizations"),
+  line: v.number(),
+  beneficiaryId: v.id("beneficiaries"),
+  beneficiaryName: v.string(),
+  accountMasked: v.string(),
+  amountMinor: v.number(),
+  currency: v.string(),
+  narration: v.optional(v.string()),
+  reference: v.optional(v.string()),
+  status: v.union(v.literal("queued"), v.literal("submitted"), v.literal("refused"), v.literal("cancelled")),
+  payoutId: v.optional(v.string()),
+  payoutStatus: v.optional(v.string()),
+  error: v.optional(v.string()),
+})
+  .index("by_batch_line", ["batchId", "line"])
+  .index("by_batch_status", ["batchId", "status"]);
+
+// Two-person approval requests (maker-checker).
+export const approvalRequests = defineTable({
+  orgId: v.id("organizations"),
+  kind: v.union(v.literal("payout"), v.literal("bulk_payout"), v.literal("policy_change")),
+  status: v.union(
+    v.literal("pending"),
+    v.literal("approved"),
+    v.literal("rejected"),
+    v.literal("cancelled"),
+    v.literal("expired"),
+    v.literal("executed"),
+    v.literal("failed"),
+  ),
+  summary: v.string(),
+  amountMinor: v.optional(v.number()),
+  currency: v.optional(v.string()),
+  /** Validated arguments to execute on approval. */
+  payload: v.any(),
+  /** "user:<id>" or "api:<key prefix>". */
+  requestedBy: v.string(),
+  requestedByUserId: v.optional(v.id("users")),
+  requestedByLabel: v.string(),
+  requestedAt: v.number(),
+  expiresAt: v.number(),
+  idempotencyKey: v.optional(v.string()),
+  decidedByUserId: v.optional(v.id("users")),
+  decidedByLabel: v.optional(v.string()),
+  decidedAt: v.optional(v.number()),
+  note: v.optional(v.string()),
+  result: v.optional(v.any()),
+  error: v.optional(v.string()),
+})
+  .index("by_org_status", ["orgId", "status", "requestedAt"])
+  .index("by_org_requested", ["orgId", "requestedAt"])
+  .index("by_status_expires", ["status", "expiresAt"])
+  .index("by_org_idem", ["orgId", "idempotencyKey"]);
+
 // Fixed-window counters for unauthenticated endpoints (checkout, webhooks).
 export const rateBuckets = defineTable({
   bucket: v.string(),
@@ -978,6 +1187,7 @@ const schema = defineSchema(
     paymentLinks,
     beneficiaries,
     payouts,
+    recipients,
     disputes,
     disputeEvents,
     providerHealth,
@@ -1000,6 +1210,13 @@ const schema = defineSchema(
     orgInvitations,
     contactRequests,
     rateBuckets,
+    approvalRequests,
+    payoutBatches,
+    payoutBatchItems,
+    paymentMethods,
+    plans,
+    subscriptions,
+    invoices,
   },
   {
     schemaValidation: false,

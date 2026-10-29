@@ -29,6 +29,27 @@ VITE_CONVEX_URL=https://<deployment>.convex.cloud npm run build
 
 Development: `npx convex dev` + `npm run dev`.
 
+## Plug-and-play settings
+
+Everything below is already built. Setting the variable (Convex dashboard →
+Settings → Environment Variables, or `npx convex env set … --prod`) switches it
+on; no code changes and no rebuild of the frontend.
+
+| Turn on | Set |
+|---|---|
+| Email sign-in codes | `RESEND_API_KEY` + `OTP_EMAIL_FROM` (or `OTP_EMAIL_RELAY_URL` + `OTP_EMAIL_API_KEY`) |
+| Google sign-in | `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET`, `SITE_URL` |
+| Microsoft Entra ID sign-in | `AUTH_MICROSOFT_ENTRA_ID_ID`, `_SECRET`, `_ISSUER`, `SITE_URL` |
+| Okta sign-in | `AUTH_OKTA_ID`, `_SECRET`, `_ISSUER`, `SITE_URL` |
+| Any other OIDC identity provider | `AUTH_OIDC_ID`, `_SECRET`, `_ISSUER`, `AUTH_OIDC_NAME`, `SITE_URL` |
+| Sanctions screening | `OPENSANCTIONS_API_KEY` |
+| Platform-owned provider accounts | the provider keys in `.env.example` (merchants can also connect their own under Providers) |
+
+Single sign-on callback URL to register with the identity provider:
+`https://<deployment>.convex.site/api/auth/callback/<google|microsoft-entra-id|okta|oidc>`.
+Provider credentials, webhook secrets, approval rules, key restrictions and
+routing are configured in the dashboard, also without code changes.
+
 ## Checks before going live
 
 - [ ] `npm run typecheck`, `npm run lint`, `npm test`, `npm run build` all pass in CI.

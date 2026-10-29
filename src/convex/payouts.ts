@@ -25,17 +25,19 @@ import { platformConnectionId, resolveConnection, notify, type RoutingContext } 
 import type { Doc, Id } from "./_generated/dataModel";
 import { requireOrgMember, requireOrgMemberAction } from "./lib/rbac";
 import { PERMISSIONS } from "./schema";
-import { postDoubleEntry, merchantAccountCode, providerClearingCode, feesAccountCode, ACCOUNT_KINDS } from "./lib/ledger";
+import { postDoubleEntry, merchantAccountCode, providerClearingCode, feesAccountCode, recipientAccountCode, ACCOUNT_KINDS, type Posting } from "./lib/ledger";
 import { logAudit } from "./lib/audit";
 import { sha256Hex } from "./lib/crypto";
 import { seal, open as openSealed, keyringConfigured } from "./lib/keyring";
 import { isSupportedCurrency } from "../lib/money";
 import { withIdempotency, fingerprint } from "./lib/idempotency";
+import { payoutNeedsApproval, type ApprovalPolicy } from "./lib/approvals";
+import { formatMoney } from "../lib/money";
 
 export const PAYOUT_FEE_BPS = 20; // 0.2% payout fee, integer math
 export const PAYOUT_MINOR_FEE_CAP = 100_000; // cap: 1,000.00 major units
 
-function payoutFee(amountMinor: number): number {
+export function payoutFee(amountMinor: number): number {
   return Math.min(Math.round((amountMinor * PAYOUT_FEE_BPS) / 10_000), PAYOUT_MINOR_FEE_CAP);
 }
 
@@ -70,43 +72,61 @@ export const createBeneficiary = action({
       throw new ConvexError("FORBIDDEN: missing permission 'payments:create'");
     }
     await ctx.runQuery(api.providers.assertSensitive, { permission: PERMISSIONS.PAYMENTS_CREATE });
-    const name = args.name.trim();
-    const bankName = args.bankName.trim();
-    const accountNumber = args.accountNumber.replace(/[\s-]+/g, "");
-    if (!name || name.length > 120 || !bankName) throw new ConvexError("VALIDATION_ERROR: name and bank are required");
-    if (!/^\+?\d{6,34}$/.test(accountNumber)) {
-      throw new ConvexError("VALIDATION_ERROR: account or wallet number must be 6–34 digits");
-    }
-    if (!isSupportedCurrency(args.currency)) {
-      throw new ConvexError(`VALIDATION_ERROR: unsupported currency '${args.currency}'`);
-    }
-    const accountHash = await sha256Hex(`${accountNumber}:${args.bankCode ?? bankName}`);
-    const encryption = keyringConfigured();
     const environment = (oc.org.environment ?? "sandbox") as "sandbox" | "production";
-    if (!encryption && environment === "production") {
-      throw new ConvexError("Payout accounts cannot be stored securely: the encryption key is not configured.");
-    }
-    const sealedAccount = encryption ? await seal(accountNumber, `beneficiary:${oc.orgId}:${accountHash}`) : undefined;
-    return await ctx.runMutation(internal.payouts.insertBeneficiaryInternal, {
-      orgId: oc.orgId,
-      userId: oc.userId,
-      name,
-      bankName,
-      bankCode: args.bankCode?.trim() || undefined,
-      accountMasked: `••••${accountNumber.slice(-4)}`,
-      accountHash,
-      sealedAccount,
-      currency: args.currency.toUpperCase(),
-      country: args.country?.toUpperCase() || undefined,
-      accountType: args.accountType ?? "bank_account",
-    });
+    const prepared = await prepareBeneficiary(oc.orgId, environment, args);
+    return await ctx.runMutation(internal.payouts.insertBeneficiaryInternal, { ...prepared, userId: oc.userId });
   },
 });
+
+export interface BeneficiaryInput {
+  name: string;
+  bankName: string;
+  bankCode?: string;
+  accountNumber: string;
+  currency: string;
+  country?: string;
+  accountType?: "bank_account" | "mobile_money";
+}
+
+/** Validate payout account details and seal the account number. Never stores it in clear. */
+export async function prepareBeneficiary(orgId: Id<"organizations">, environment: "sandbox" | "production", args: BeneficiaryInput) {
+  const name = args.name.trim();
+  const bankName = args.bankName.trim();
+  const accountNumber = args.accountNumber.replace(/[\s-]+/g, "");
+  if (!name || name.length > 120 || !bankName || bankName.length > 120) throw new ConvexError("VALIDATION_ERROR: name and bank are required");
+  if (!/^\+?\d{6,34}$/.test(accountNumber)) {
+    throw new ConvexError("VALIDATION_ERROR: account or wallet number must be 6–34 digits");
+  }
+  if (!isSupportedCurrency(args.currency)) {
+    throw new ConvexError(`VALIDATION_ERROR: unsupported currency '${args.currency}'`);
+  }
+  if (args.country !== undefined && args.country !== "" && !/^[A-Za-z]{2}$/.test(args.country)) {
+    throw new ConvexError("VALIDATION_ERROR: country must be an ISO 3166-1 alpha-2 code");
+  }
+  const accountHash = await sha256Hex(`${accountNumber}:${args.bankCode ?? bankName}`);
+  const encryption = keyringConfigured();
+  if (!encryption && environment === "production") {
+    throw new ConvexError("Payout accounts cannot be stored securely: the encryption key is not configured.");
+  }
+  const sealedAccount = encryption ? await seal(accountNumber, `beneficiary:${orgId}:${accountHash}`) : undefined;
+  return {
+    orgId,
+    name,
+    bankName,
+    bankCode: args.bankCode?.trim() || undefined,
+    accountMasked: `••••${accountNumber.slice(-4)}`,
+    accountHash,
+    sealedAccount,
+    currency: args.currency.toUpperCase(),
+    country: args.country?.toUpperCase() || undefined,
+    accountType: args.accountType ?? ("bank_account" as const),
+  };
+}
 
 export const insertBeneficiaryInternal = internalMutation({
   args: {
     orgId: v.id("organizations"),
-    userId: v.id("users"),
+    userId: v.optional(v.id("users")),
     name: v.string(),
     bankName: v.string(),
     bankCode: v.optional(v.string()),
@@ -143,7 +163,7 @@ export const insertBeneficiaryInternal = internalMutation({
     });
     await logAudit(ctx, {
       orgId: a.orgId,
-      actor: a.userId,
+      actor: a.userId ?? "api",
       action: "beneficiary.created",
       resource: "beneficiary",
       resourceId: id,
@@ -201,7 +221,7 @@ export const createDashboardPayout = action({
     narration: v.optional(v.string()),
     simulate: v.optional(v.string()),
   },
-  handler: async (ctx, args): Promise<{ payoutId: string; status: string }> => {
+  handler: async (ctx, args): Promise<{ payoutId: string; status: string; approvalId?: string }> => {
     const oc = await requireOrgMemberAction(ctx);
     if (!oc.permissions.has(PERMISSIONS.PAYMENTS_CREATE)) {
       throw new ConvexError("FORBIDDEN: missing permission 'payments:create'");
@@ -214,6 +234,16 @@ export const createDashboardPayout = action({
     if (!beneficiary || beneficiary.orgId !== oc.orgId) {
       throw new ConvexError("NOT_FOUND: beneficiary does not belong to this organization");
     }
+    const gate = await approvalGate(ctx, {
+      orgId: oc.orgId,
+      beneficiary,
+      amountMinor: args.amountMinor,
+      narration: args.narration,
+      simulate: args.simulate,
+      requestedBy: `user:${oc.userId}`,
+      requestedByUserId: oc.userId,
+    });
+    if (gate) return { payoutId: "", status: "PENDING_APPROVAL", approvalId: gate };
     const result = await ctx.runAction(internal.payouts.payoutInternal, {
       orgId: oc.orgId,
       beneficiaryId: args.beneficiaryId,
@@ -228,6 +258,46 @@ export const createDashboardPayout = action({
     return { payoutId: result.payoutId!, status: result.status! };
   },
 });
+
+/**
+ * Two-person approval gate. Returns an approval request id when the payout
+ * must wait for a second approver, or null to proceed now.
+ */
+export async function approvalGate(
+  ctx: ActionCtx,
+  a: {
+    orgId: Id<"organizations">;
+    beneficiary: Doc<"beneficiaries">;
+    amountMinor: number;
+    narration?: string;
+    simulate?: string;
+    requestedBy: string;
+    requestedByUserId?: Id<"users">;
+    requestedByLabel?: string;
+    idempotencyKey?: string;
+    /** Paying a marketplace recipient from its own balance. */
+    recipient?: { _id: Id<"recipients">; recipientId: string };
+  },
+): Promise<string | null> {
+  const policy: ApprovalPolicy = await ctx.runQuery(internal.approvals.orgPolicyInternal, { orgId: a.orgId });
+  if (policy.payouts === "off") return null;
+  const usd: number | null = await ctx.runQuery(internal.fxrates.usdEquivalentInternal, { amountMinor: a.amountMinor, currency: a.beneficiary.currency });
+  if (!payoutNeedsApproval(policy, usd)) return null;
+  if (!Number.isSafeInteger(a.amountMinor) || a.amountMinor <= 0) throw new ConvexError("VALIDATION_ERROR: amount must be a positive integer of minor units");
+  const r: { approvalId: Id<"approvalRequests"> } = await ctx.runMutation(internal.approvals.createRequestInternal, {
+    orgId: a.orgId,
+    kind: "payout",
+    summary: `Pay ${formatMoney(a.amountMinor, a.beneficiary.currency)}${a.recipient ? ` from recipient ${a.recipient.recipientId}'s balance` : ""} to ${a.beneficiary.name} (${a.beneficiary.bankName} ${a.beneficiary.accountMasked})${a.narration ? `: ${a.narration}` : ""}`,
+    amountMinor: a.amountMinor,
+    currency: a.beneficiary.currency,
+    payload: { beneficiaryId: a.beneficiary._id, amountMinor: a.amountMinor, narration: a.narration, simulate: a.simulate, recipientId: a.recipient?._id },
+    requestedBy: a.requestedBy,
+    requestedByUserId: a.requestedByUserId,
+    requestedByLabel: a.requestedByLabel,
+    idempotencyKey: a.idempotencyKey,
+  });
+  return r.approvalId;
+}
 
 export const beneficiaryByIdInternal = internalQuery({
   args: { beneficiaryId: v.id("beneficiaries") },
@@ -285,6 +355,8 @@ export const payoutInternal = internalAction({
     actor: v.optional(v.string()),
     idempotencyKey: v.optional(v.string()),
     requestId: v.optional(v.string()),
+    /** Debit this marketplace recipient's balance instead of the merchant's. */
+    recipientId: v.optional(v.id("recipients")),
   },
   handler: async (ctx, args): Promise<{
     kind: "done" | "error";
@@ -318,6 +390,7 @@ export const payoutInternal = internalAction({
         amountMinor: args.amountMinor,
         narration: args.narration,
         actor: args.actor,
+        recipientId: args.recipientId,
       });
       if (created.kind === "error") throw new Error(created.message ?? "Payout failed");
       const { payoutId } = created;
@@ -380,7 +453,7 @@ export const payoutInternal = internalAction({
     };
 
     if (args.idempotencyKey) {
-      const fp = await fingerprint({ beneficiaryId: args.beneficiaryId, amountMinor: args.amountMinor, kind: "payout" });
+      const fp = await fingerprint({ beneficiaryId: args.beneficiaryId, amountMinor: args.amountMinor, kind: "payout", recipientId: args.recipientId ?? null });
       try {
         const r = await withIdempotency<{ payoutId: string; status: string }>(ctx, { orgId: args.orgId, key: `payout_${args.idempotencyKey}`, fp }, run);
         return { kind: "done", payoutId: r.body.payoutId, status: r.body.status };
@@ -535,6 +608,7 @@ export const createPayoutRecordInternal = internalMutation({
     amountMinor: v.number(),
     narration: v.optional(v.string()),
     actor: v.optional(v.string()),
+    recipientId: v.optional(v.id("recipients")),
   },
   handler: async (
     ctx,
@@ -558,8 +632,17 @@ export const createPayoutRecordInternal = internalMutation({
     const feeMinor = payoutFee(args.amountMinor);
     const debitTotal = args.amountMinor + feeMinor;
 
+    let recipient: Doc<"recipients"> | null = null;
+    if (args.recipientId) {
+      recipient = await ctx.db.get(args.recipientId);
+      if (!recipient || recipient.orgId !== args.orgId) return { kind: "error", message: "NOT_FOUND: recipient" };
+      if (recipient.beneficiaryId !== args.beneficiaryId) return { kind: "error", message: "VALIDATION_ERROR: a recipient can only be paid to its own payout account" };
+      if (recipient.currency !== currency) return { kind: "error", message: "VALIDATION_ERROR: recipient currency does not match its payout account" };
+    }
+    const source = sourceAccount(args.orgId, merchant, currency, recipient);
+
     // Balance check straight from the ledger.
-    const accountCode = merchantAccountCode(merchant._id, currency);
+    const accountCode = source.code;
     const account = await ctx.db
       .query("ledgerAccounts")
       .withIndex("by_code", (q) => q.eq("code", accountCode))
@@ -587,6 +670,7 @@ export const createPayoutRecordInternal = internalMutation({
       orgId: args.orgId,
       merchantId: merchant._id,
       beneficiaryId: args.beneficiaryId,
+      recipientId: recipient?._id,
       payoutId,
       reference,
       amountMinor: args.amountMinor,
@@ -604,14 +688,7 @@ export const createPayoutRecordInternal = internalMutation({
       ledgerRef: `PO-${payoutId}`,
       postings: [
         {
-          account: {
-            orgId: args.orgId,
-            merchantId: merchant._id,
-            currency,
-            kind: ACCOUNT_KINDS.MERCHANT_BALANCE,
-            code: accountCode,
-            name: `${merchant.name} balance ${currency}`,
-          },
+          account: source,
           direction: "debit",
           amountMinor: debitTotal,
           description: `Payout ${payoutId} to ${beneficiary.accountMasked}`,
@@ -661,6 +738,27 @@ export const createPayoutRecordInternal = internalMutation({
   },
 });
 
+/** The balance a payout is paid from: the merchant's, or a marketplace recipient's. */
+function sourceAccount(orgId: Id<"organizations">, merchant: Doc<"merchants">, currency: string, recipient: Doc<"recipients"> | null): Posting["account"] {
+  if (recipient) {
+    return {
+      orgId,
+      currency,
+      kind: ACCOUNT_KINDS.RECIPIENT_BALANCE,
+      code: recipientAccountCode(recipient._id, currency),
+      name: `Recipient ${recipient.recipientId} balance ${currency}`,
+    };
+  }
+  return {
+    orgId,
+    merchantId: merchant._id,
+    currency,
+    kind: ACCOUNT_KINDS.MERCHANT_BALANCE,
+    code: merchantAccountCode(merchant._id, currency),
+    name: `${merchant.name} balance ${currency}`,
+  };
+}
+
 export const transitionPayoutInternal = internalMutation({
   args: { payoutId: v.string(), toStatus: v.string(), actor: v.string() },
   handler: async (ctx, args) => {
@@ -702,6 +800,8 @@ export const completePayoutInternal = internalMutation({
 
     const merchant = await ctx.db.get(p.merchantId);
     if (!merchant) throw new ConvexError("merchant not found");
+    const recipient = p.recipientId ? await ctx.db.get(p.recipientId) : null;
+    const source = sourceAccount(p.orgId, merchant, p.currency, recipient);
 
     const now = Date.now();
     await ctx.db.patch(p._id, {
@@ -770,14 +870,7 @@ export const completePayoutInternal = internalMutation({
             description: `Payout ${p.payoutId} failed — return`,
           },
           {
-            account: {
-              orgId: p.orgId,
-              merchantId: p.merchantId,
-              currency: p.currency,
-              kind: ACCOUNT_KINDS.MERCHANT_BALANCE,
-              code: merchantAccountCode(p.merchantId, p.currency),
-              name: `${merchant.name} balance ${p.currency}`,
-            },
+            account: source,
             direction: "credit",
             amountMinor: p.amountMinor + p.feeMinor,
             description: `Payout ${p.payoutId} failed — refund incl. fee`,
@@ -819,14 +912,7 @@ export const completePayoutInternal = internalMutation({
             description: `Payout ${p.payoutId} reversed`,
           },
           {
-            account: {
-              orgId: p.orgId,
-              merchantId: p.merchantId,
-              currency: p.currency,
-              kind: ACCOUNT_KINDS.MERCHANT_BALANCE,
-              code: merchantAccountCode(p.merchantId, p.currency),
-              name: `${merchant.name} balance ${p.currency}`,
-            },
+            account: source,
             direction: "credit",
             amountMinor: p.amountMinor,
             description: `Payout ${p.payoutId} reversed to balance`,

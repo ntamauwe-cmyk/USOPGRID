@@ -9,7 +9,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { cn } from "@/lib/utils";
 import {
   LayoutDashboard, ArrowLeftRight, Landmark, KeyRound, Webhook, Github, Users, ScrollText, LogOut, Loader2, Link2, Send, ShieldAlert,
-  Contact, Network, Route, Scale, BarChart3, FileText, Building2, Lock, Bell, Activity, Menu,
+  Contact, Network, Route, Scale, BarChart3, FileText, Building2, Lock, Bell, Activity, Menu, ShieldCheck, Repeat, Store,
 } from "lucide-react";
 import { UsopgridLogo } from "@/components/brand";
 import { StepUpProvider } from "@/components/StepUp";
@@ -23,7 +23,10 @@ const GROUPS: { label: string; items: Item[] }[] = [
       { to: "/dashboard/transactions", label: "Transactions", icon: ArrowLeftRight },
       { to: "/dashboard/customers", label: "Customers", icon: Contact },
       { to: "/dashboard/links", label: "Payment links", icon: Link2 },
+      { to: "/dashboard/billing", label: "Billing", icon: Repeat },
+      { to: "/dashboard/marketplace", label: "Marketplace", icon: Store },
       { to: "/dashboard/payouts", label: "Payouts", icon: Send },
+      { to: "/dashboard/approvals", label: "Approvals", icon: ShieldCheck },
       { to: "/dashboard/disputes", label: "Disputes", icon: ShieldAlert },
     ],
   },
@@ -66,6 +69,7 @@ function Nav({ isPlatformAdmin, onNavigate }: { isPlatformAdmin: boolean; onNavi
   const groups = isPlatformAdmin
     ? [...GROUPS, { label: "USOPGRID staff", items: [{ to: "/dashboard/operations", label: "Operations console", icon: Activity }] }]
     : GROUPS;
+  const pendingApprovals = useQuery(api.approvals.pendingCount, {});
   return (
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Dashboard">
       {groups.map((g) => (
@@ -89,6 +93,11 @@ function Nav({ isPlatformAdmin, onNavigate }: { isPlatformAdmin: boolean; onNavi
               >
                 <Icon className="size-4 opacity-80" strokeWidth={1.75} />
                 {label}
+                {to === "/dashboard/approvals" && !!pendingApprovals && (
+                  <span className="ml-auto rounded-full bg-gold px-1.5 text-[10px] font-semibold leading-4 text-sidebar-primary-foreground" aria-label={`${pendingApprovals} waiting`}>
+                    {pendingApprovals}
+                  </span>
+                )}
               </NavLink>
             ))}
           </div>
