@@ -1,0 +1,6 @@
+/* Self-hosted brand fonts (SIL Open Font License, see /fonts/OFL-*.txt).
+   Subset to Latin, Latin Extended, Vietnamese and currency symbols. */
+@font-face { font-family: "Archivo"; src: url("/fonts/archivo-display.woff") format("woff"); font-weight: 600 800; font-stretch: 112%; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Sans"; src: url("/fonts/plex-sans.woff") format("woff"); font-weight: 400 600; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/fonts/plex-mono-400.woff") format("woff"); font-weight: 400; font-style: normal; font-display: swap; }
+@font-face { font-family: "IBM Plex Mono"; src: url("/fonts/plex-mono-500.woff") format("woff"); font-weight: 500; font-style: normal; font-display: swap; }

@@ -1,23 +1,13 @@
 {
-  "name": "RAEVOLT",
-  "short_name": "RAEVOLT",
-  "description": "RAEVOLT — payment infrastructure by RAE Technologies Limited",
-  "start_url": "/",
+  "name": "USOPGRID — Enterprise Payment Infrastructure",
+  "short_name": "USOPGRID",
+  "description": "USOPGRID — Powering Every Payment Connection. Enterprise payment infrastructure by RAE Horizon Technologies Limited.",
+  "start_url": "/dashboard",
   "display": "standalone",
-  "background_color": "#080A24",
-  "theme_color": "#080A24",
+  "background_color": "#0B1240",
+  "theme_color": "#0B1240",
   "icons": [
-    {
-      "src": "/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    },
-    {
-      "src": "/logo.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "maskable"
-    }
+    { "src": "/logo.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
   ]
 }

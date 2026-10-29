@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#0B1240"/>
+  <g fill="#FFFFFF" opacity=".08">
+    <circle cx="700" cy="120" r="5"/><circle cx="820" cy="120" r="5"/><circle cx="940" cy="120" r="5"/><circle cx="1060" cy="120" r="5"/>
+    <circle cx="700" cy="315" r="5"/><circle cx="820" cy="315" r="5"/><circle cx="940" cy="315" r="5"/><circle cx="1060" cy="315" r="5"/>
+    <circle cx="700" cy="510" r="5"/><circle cx="820" cy="510" r="5"/><circle cx="940" cy="510" r="5"/><circle cx="1060" cy="510" r="5"/>
+  </g>
+  <path d="M640 315 H820 V160 H1060 M820 315 V470 H1060" stroke="#12C2B0" stroke-width="14" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="640" cy="315" r="16" fill="#fff"/><circle cx="820" cy="315" r="22" fill="#12C2B0"/><circle cx="1060" cy="160" r="16" fill="#12C2B0"/><circle cx="1060" cy="470" r="16" fill="#2D5BFF"/>
+  <text x="80" y="280" font-family="Archivo, Arial, sans-serif" font-size="78" font-weight="800" fill="#fff" letter-spacing="3">USOPGRID</text>
+  <text x="80" y="350" font-family="IBM Plex Sans, Arial, sans-serif" font-size="34" fill="#C9D2F0">Powering Every Payment Connection.</text>
+  <text x="80" y="560" font-family="IBM Plex Sans, Arial, sans-serif" font-size="22" fill="#8C97C4">Enterprise Payment Infrastructure · RAE Horizon Technologies Limited</text>
+</svg>
