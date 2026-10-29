@@ -1,4 +1,4 @@
-// RAEVOLT settlements page (prompt §18, §19): batches, ledger balances, bank
+// USOPGRID settlements page: batches, ledger balances, bank
 // records and reconciliation — finance teams work from one transaction truth.
 import { useState } from "react";
 import { useQuery, useAction, useMutation } from "convex/react";
@@ -13,7 +13,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, StatusPill, EmptyState, KeyValue } from "@/components/raevolt";
+import { PageHeader, StatusPill, EmptyState, KeyValue } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
 import type { Id } from "@/convex/_generated/dataModel";
 import {

@@ -1,4 +1,4 @@
-// RAEVOLT payment links page (prompt §21) — create, share, toggle links and
+// USOPGRID payment links page — create, share, toggle links and
 // track usage. Copy-to-clipboard for the public checkout URL.
 import { useState } from "react";
 import { useQuery, useMutation } from "convex/react";
@@ -23,7 +23,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { PageHeader, EmptyState, StatusPill } from "@/components/raevolt";
+import { PageHeader, EmptyState, StatusPill } from "@/components/kit";
 import { Link2, Plus, Loader2, Copy, Check, ExternalLink, ToggleLeft, ToggleRight } from "lucide-react";
 import { toast } from "sonner";
 

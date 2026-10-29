@@ -29,8 +29,10 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, StatusPill, EmptyState } from "@/components/raevolt";
-import { formatMoney, formatMoneyCompact } from "@/lib/money";
+import { PageHeader, StatusPill, EmptyState, errorMessage } from "@/components/kit";
+import { formatMoney, formatMoneyCompact, decimalToMinor, currencyDecimals } from "@/lib/money";
+import { ACTIVE_CURRENCY_CODES } from "@/lib/geo";
+import { PAYMENT_METHODS as ALL_METHODS, METHOD_LABELS, SANDBOX_SIMULATION_KEYS } from "@/convex/providers/index";
 import { Link, useNavigate } from "react-router";
 import {
   ArrowLeftRight,
@@ -51,24 +53,25 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const PAYMENT_METHODS = [
-  { value: "card", label: "Card" },
-  { value: "bank_transfer", label: "Bank transfer" },
-  { value: "mobile_money", label: "Mobile money" },
-  { value: "ussd", label: "USSD" },
-];
+const PAYMENT_METHOD_OPTIONS = ALL_METHODS.map((m) => ({ value: m, label: METHOD_LABELS[m] }));
 
-const SIMULATIONS = [
-  { value: "success", label: "Successful payment" },
-  { value: "pending", label: "Pending (async rail)" },
-  { value: "issuer_decline", label: "Issuer decline" },
-  { value: "insufficient_funds", label: "Insufficient funds" },
-  { value: "timeout", label: "Provider timeout (retryable)" },
-  { value: "provider_failure", label: "Temporary provider failure" },
-  { value: "fraud_rejection", label: "Fraud rejection" },
-];
+const SIMULATION_LABELS: Record<string, string> = {
+  success: "Successful payment",
+  pending: "Pending (async rail)",
+  requires_action: "Customer must authenticate",
+  issuer_decline: "Issuer decline",
+  insufficient_funds: "Insufficient funds",
+  fraud_rejection: "Provider fraud rejection",
+  invalid_payment_information: "Invalid payment details",
+  customer_cancellation: "Customer cancelled",
+  timeout: "Timeout, later confirmed successful",
+  timeout_declined: "Timeout, later confirmed declined",
+  failover: "Primary rail down, failover succeeds",
+  provider_down: "Every rail down",
+};
+const SIMULATIONS = SANDBOX_SIMULATION_KEYS.map((k) => ({ value: k, label: SIMULATION_LABELS[k] ?? k }));
 
-function NewPaymentDialog({ defaultCurrency }: { defaultCurrency: string }) {
+function NewPaymentDialog({ defaultCurrency, environment }: { defaultCurrency: string; environment: string }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -79,25 +82,30 @@ function NewPaymentDialog({ defaultCurrency }: { defaultCurrency: string }) {
     setBusy(true);
     setError(null);
     const fd = new FormData(e.currentTarget);
-    const major = Number(fd.get("amount"));
-    if (!Number.isFinite(major) || major <= 0) {
-      setError("Enter a valid amount.");
+    const currency = String(fd.get("currency") || defaultCurrency).trim().toUpperCase();
+    let amountMinor: number;
+    try {
+      amountMinor = decimalToMinor(String(fd.get("amount") ?? "").trim(), currency);
+      if (amountMinor <= 0) throw new Error();
+    } catch {
+      setError(`Enter a positive amount with at most ${currencyDecimals(currency)} decimal places for ${currency}.`);
       setBusy(false);
       return;
     }
     try {
       await createPayment({
-        amountMinor: Math.round(major * 100),
-        currency: (fd.get("currency") as string) || defaultCurrency,
+        amountMinor,
+        currency,
+        country: String(fd.get("country") ?? "").trim().toUpperCase() || undefined,
         customerEmail: (fd.get("email") as string) || undefined,
         customerName: (fd.get("name") as string) || undefined,
         paymentMethod: fd.get("method") as string,
-        simulate: fd.get("simulate") as string,
+        simulate: environment === "sandbox" ? (fd.get("simulate") as string) : undefined,
         description: (fd.get("description") as string) || undefined,
       });
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Payment failed");
+      setError(errorMessage(err, "Payment failed"));
     } finally {
       setBusy(false);
     }
@@ -112,28 +120,23 @@ function NewPaymentDialog({ defaultCurrency }: { defaultCurrency: string }) {
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Create a test payment</DialogTitle>
+          <DialogTitle>{environment === "sandbox" ? "Create a test payment" : "Create a live payment"}</DialogTitle>
           <DialogDescription>
-            Routed through the same payment engine as the public API — full lifecycle,
-            ledger posting and webhook events included.
+            Runs through the same engine as the API: screening, routing, failover, ledger posting and webhooks.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-[1fr_7rem] gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="amount">Amount</Label>
-              <Input id="amount" name="amount" type="number" step="0.01" min="0.01" placeholder="2500.00" required />
+              <Input id="amount" name="amount" inputMode="decimal" placeholder="2500.00" required />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="currency">Currency</Label>
-              <Select name="currency" defaultValue={defaultCurrency}>
-                <SelectTrigger id="currency"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {["NGN", "USD", "EUR", "GBP", "GHS", "KES", "ZAR"].map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <Input id="currency" name="currency" defaultValue={defaultCurrency} list="ug-currencies" maxLength={3} required className="uppercase" />
+              <datalist id="ug-currencies">
+                {ACTIVE_CURRENCY_CODES.map((c) => <option key={c} value={c} />)}
+              </datalist>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
@@ -142,12 +145,13 @@ function NewPaymentDialog({ defaultCurrency }: { defaultCurrency: string }) {
               <Select name="method" defaultValue="card">
                 <SelectTrigger id="method"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {PAYMENT_METHODS.map((m) => (
+                  {PAYMENT_METHOD_OPTIONS.map((m) => (
                     <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+            {environment === "sandbox" ? (
             <div className="space-y-1.5">
               <Label htmlFor="simulate">Sandbox scenario</Label>
               <Select name="simulate" defaultValue="success">
@@ -159,7 +163,19 @@ function NewPaymentDialog({ defaultCurrency }: { defaultCurrency: string }) {
                 </SelectContent>
               </Select>
             </div>
+            ) : (
+              <div className="space-y-1.5">
+                <Label htmlFor="country">Payer country</Label>
+                <Input id="country" name="country" maxLength={2} placeholder="NG" className="uppercase" />
+              </div>
+            )}
           </div>
+          {environment === "sandbox" && (
+            <div className="space-y-1.5">
+              <Label htmlFor="country">Payer country</Label>
+              <Input id="country" name="country" maxLength={2} placeholder="NG" className="uppercase" />
+            </div>
+          )}
           <div className="space-y-1.5">
             <Label htmlFor="email">Customer email</Label>
             <Input id="email" name="email" type="email" placeholder="customer@example.com" />
@@ -194,7 +210,7 @@ export default function Overview() {
     paginationOpts: { numItems: 8, cursor: null },
   });
 
-  const currency = stats?.primaryCurrency ?? "NGN";
+  const currency = stats?.primaryCurrency ?? "USD";
   const total = stats?.total ?? 0;
 
   return (
@@ -202,7 +218,7 @@ export default function Overview() {
       <PageHeader
         title="Overview"
         description="Payment volume, success rate and the live state of your money movement."
-        actions={orgContext ? <NewPaymentDialog defaultCurrency={currency} /> : undefined}
+        actions={orgContext && orgContext.permissions.includes("payments:create") ? <NewPaymentDialog defaultCurrency={currency} environment={orgContext.org.environment} /> : undefined}
       />
 
       {/* KPI row */}
@@ -210,14 +226,14 @@ export default function Overview() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription className="flex items-center gap-2 text-xs">
-              <CircleDollarSign className="size-3.5" /> Volume (14d)
+              <CircleDollarSign className="size-3.5" /> {currency} volume (14d)
             </CardDescription>
             <CardTitle className="text-2xl tabular-nums">
               {stats === undefined ? "—" : formatMoney(stats.volume, currency)}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            {stats?.successful ?? 0} successful payments
+            {stats?.successful ?? 0} successful payments{stats && Object.keys(stats.volumeByCurrency).length > 1 ? `, plus ${Object.keys(stats.volumeByCurrency).length - 1} other currencies` : ""}
           </CardContent>
         </Card>
         <Card>
@@ -230,7 +246,7 @@ export default function Overview() {
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            {stats?.failed ?? 0} failed · {stats?.pending ?? 0} in flight
+            {stats?.failed ?? 0} failed or declined, {stats?.pending ?? 0} in flight
           </CardContent>
         </Card>
         <Card>
@@ -246,13 +262,13 @@ export default function Overview() {
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription className="text-xs">Platform fees (14d)</CardDescription>
+                <CardDescription className="text-xs">{currency} fees (14d)</CardDescription>
             <CardTitle className="text-2xl tabular-nums">
               {stats === undefined ? "—" : formatMoney(stats.fees, currency)}
             </CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">
-            Transparent, per-transaction pricing
+            {stats?.exceptions ? `${stats.exceptions} payments need reconciliation` : "Deducted before settlement"}
           </CardContent>
         </Card>
       </div>
@@ -262,7 +278,7 @@ export default function Overview() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle className="text-base">Volume</CardTitle>
-            <CardDescription>Daily successful volume, last 14 days (UTC)</CardDescription>
+            <CardDescription>Daily successful {currency} volume, last 14 days (UTC)</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="h-64">
@@ -324,7 +340,7 @@ export default function Overview() {
             {stats && stats.failureCategories.length > 0 ? (
               <ul className="space-y-3">
                 {stats.failureCategories.slice(0, 6).map((f) => (
-                  <li key={f.category}>
+                  <li key={`${f.category}-${f.code}`}>
                     <div className="flex items-center justify-between text-sm">
                       <span className="capitalize">{f.category.replace(/_/g, " ")}</span>
                       <span className="font-medium tabular-nums">{f.count}</span>

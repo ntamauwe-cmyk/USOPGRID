@@ -1,4 +1,5 @@
-// RAEVOLT transactions page — powerful filters + pagination (prompt §37, §58).
+// USOPGRID transactions page — powerful filters + pagination.
+import { TX_STATES, STATE_LABELS } from "@/convex/orchestration/states";
 import { useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -20,20 +21,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, StatusPill, EmptyState } from "@/components/raevolt";
+import { PageHeader, StatusPill, EmptyState } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
 import { Link } from "react-router";
 import { ChevronLeft, ChevronRight, Search, ArrowLeftRight, Loader2 } from "lucide-react";
 
-const STATUSES = [
-  "SUCCESSFUL",
-  "FAILED",
-  "PENDING",
-  "PROCESSING",
-  "REFUNDED",
-  "PARTIALLY_REFUNDED",
-  "CREATED",
-];
+const STATUSES = TX_STATES.filter((x) => x !== "CREATED" && x !== "VALIDATED" && x !== "ACCEPTED");
 
 export default function Transactions() {
   const [status, setStatus] = useState<string>("all");
@@ -99,7 +92,7 @@ export default function Transactions() {
                 <SelectItem value="all">All statuses</SelectItem>
                 {STATUSES.map((s) => (
                   <SelectItem key={s} value={s}>
-                    {s.replace(/_/g, " ")}
+                    {STATE_LABELS[s]}
                   </SelectItem>
                 ))}
               </SelectContent>

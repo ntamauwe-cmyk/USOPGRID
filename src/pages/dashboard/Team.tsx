@@ -1,277 +1,191 @@
-// RAEVOLT team + settings page (prompt §6, §7, §29): RBAC role management,
-// merchant fee plan and sandbox/production environment control.
+// Team: members, roles, invitations and the permission matrix.
 import { useState } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { PageHeader, EmptyState, KeyValue } from "@/components/raevolt";
-import { Users, Loader2, ShieldCheck, Percent } from "lucide-react";
+import { Label } from "@/components/ui/label";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { PageHeader, LoadingRows, errorMessage } from "@/components/kit";
+import { useSensitive } from "@/components/StepUp";
 import { toast } from "sonner";
+import { Check, UserPlus } from "lucide-react";
 
-const ROLES: { value: string; label: string; description: string }[] = [
-  { value: "owner", label: "Owner", description: "Full control including org settings" },
-  { value: "admin", label: "Administrator", description: "Everything except ownership transfer" },
-  { value: "finance", label: "Finance", description: "Settlements, ledger, audit visibility" },
-  { value: "developer", label: "Developer", description: "API keys, webhooks, payments" },
-  { value: "operations", label: "Operations", description: "Settlement and ledger visibility" },
-  { value: "viewer", label: "Viewer", description: "Read-only transaction access" },
-];
+const PERMISSION_LABELS: Record<string, string> = {
+  "org:manage": "Manage organization",
+  "team:invite": "Invite members",
+  "keys:manage": "API keys",
+  "payments:create": "Create payments",
+  "refunds:create": "Refunds",
+  "settlement:view": "Settlements",
+  "ledger:view": "Ledger",
+  "reconciliation:manage": "Reconciliation",
+  "audit:view": "Audit log",
+  "webhooks:manage": "Webhooks",
+  "providers:manage": "Providers",
+  "routing:manage": "Routing",
+  "analytics:view": "Analytics",
+  "risk:manage": "Risk",
+  "security:manage": "Security policy",
+};
 
 export default function Team() {
-  const orgContext = useQuery(api.orgs.getOrgContext, {});
+  const ctx = useQuery(api.orgs.getOrgContext, {});
   const members = useQuery(api.orgs.listMembers, {});
-  const merchants = useQuery(api.orgs.listMerchants, {});
-
+  const roles = useQuery(api.orgs.roles, {});
+  const canInvite = ctx?.permissions.includes("team:invite") ?? false;
+  const canManage = ctx?.permissions.includes("org:manage") ?? false;
+  const invites = useQuery(api.orgs.listInvitations, canInvite ? {} : "skip");
   const updateRole = useMutation(api.orgs.updateMemberRole);
-  const updateFees = useMutation(api.orgs.updateMerchantFees);
-  const updateEnv = useMutation(api.orgs.updateOrgEnvironment);
+  const invite = useMutation(api.orgs.inviteMember);
+  const revoke = useMutation(api.orgs.revokeInvitation);
+  const remove = useMutation(api.orgs.removeMember);
+  const sensitive = useSensitive();
+  const [removing, setRemoving] = useState<{ id: Id<"orgMembers">; name: string } | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const [feeBps, setFeeBps] = useState<string>("");
-  const [feeFixed, setFeeFixed] = useState<string>("");
-  const [savingFees, setSavingFees] = useState(false);
+  const isOwner = ctx?.role === "owner";
+  const roleOptions = (roles ?? []).filter((r) => isOwner || r.id !== "owner");
+  const labelFor = (id: string) => roles?.find((r) => r.id === id)?.label ?? id;
 
-  const canManage = orgContext?.permissions.includes("org:manage") ?? false;
-  const merchant = merchants?.[0];
-
-  async function handleSaveFees() {
-    if (!merchant) return;
-    const bps = Number(feeBps);
-    const fixed = Number(feeFixed);
-    if (!Number.isFinite(bps) || bps < 0 || bps > 10000) {
-      toast.error("Percentage fee must be between 0 and 10000 basis points (0–100%).");
-      return;
-    }
-    if (!Number.isFinite(fixed) || fixed < 0) {
-      toast.error("Fixed fee must be a non-negative number.");
-      return;
-    }
-    setSavingFees(true);
+  async function act(fn: () => Promise<unknown>, ok: string) {
     try {
-      await updateFees({
-        merchantId: merchant._id,
-        feeBps: Math.round(bps),
-        feeFixedMinor: Math.round(fixed),
-      });
-      toast.success("Fee plan updated.");
-      setFeeBps("");
-      setFeeFixed("");
+      await sensitive(fn);
+      toast.success(ok);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Update failed");
-    } finally {
-      setSavingFees(false);
+      toast.error(errorMessage(err));
     }
   }
 
   return (
-    <div className="mx-auto max-w-7xl">
-      <PageHeader
-        title="Team & settings"
-        description="Roles and permissions, merchant fee plan and environment controls."
-      />
+    <div className="space-y-8">
+      <PageHeader title="Team" description="Who can access this organization and what each role can do. Permissions are enforced on the server." />
 
-      {/* Team members */}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between">
-          <div>
-            <CardTitle className="text-base">Team members</CardTitle>
-            <CardDescription>
-              Permission-level access control — roles map to explicit permission sets.
-            </CardDescription>
+      {canInvite && (
+        <form
+          className="flex flex-wrap items-end gap-3 rounded-lg border bg-card p-4"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            const form = e.currentTarget;
+            const fd = new FormData(form);
+            setBusy(true);
+            try {
+              await sensitive(() => invite({ email: String(fd.get("email")), role: String(fd.get("role")) as "viewer" }));
+              toast.success("Invitation created. Ask them to sign in with that email address.");
+              form.reset();
+            } catch (err) {
+              toast.error(errorMessage(err));
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <div className="min-w-[16rem] flex-1 space-y-1.5">
+            <Label htmlFor="inv-email">Invite by email</Label>
+            <Input id="inv-email" name="email" type="email" required placeholder="colleague@company.com" />
           </div>
-        </CardHeader>
-        <CardContent>
-          {members === undefined ? (
-            <div className="flex justify-center py-8">
-              <Loader2 className="size-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : members.length === 0 ? (
-            <EmptyState icon={<Users className="size-5" />} title="No members" description="Invite teammates to collaborate." />
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Member</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {members.map((m) => (
-                  <TableRow key={m._id}>
-                    <TableCell>
-                      <div className="text-sm font-medium">{m.name}</div>
-                      <div className="text-xs text-muted-foreground">{m.email ?? "—"}</div>
-                    </TableCell>
-                    <TableCell>
-                      {canManage && m.role !== "owner" ? (
-                        <Select
-                          value={m.role}
-                          onValueChange={(role) =>
-                            updateRole({ memberId: m._id, role })
-                              .then(() => toast.success("Role updated"))
-                              .catch((e: unknown) =>
-                                toast.error(e instanceof Error ? e.message : "Update failed"))
-                          }
-                        >
-                          <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {ROLES.filter((r) => r.value !== "owner").map((r) => (
-                              <SelectItem key={r.value} value={r.value}>{r.label}</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <span className="text-sm capitalize">{m.role}</span>
-                      )}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(m.joinedAt).toLocaleDateString()}
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-        </CardContent>
-      </Card>
+          <div className="space-y-1.5">
+            <Label htmlFor="inv-role">Role</Label>
+            <select id="inv-role" name="role" defaultValue="developer" className="h-9 rounded-md border bg-background px-2 text-sm">
+              {roleOptions.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+            </select>
+          </div>
+          <Button type="submit" disabled={busy}><UserPlus className="size-4" /> {busy ? "Inviting…" : "Send invitation"}</Button>
+        </form>
+      )}
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        {/* Merchant fee plan */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <Percent className="size-4" /> Fee plan
-            </CardTitle>
-            <CardDescription>
-              Per-transaction pricing charged by RAEVOLT — separate from provider
-              costs, configured per merchant.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {merchant === undefined ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : merchant == null ? (
-              <EmptyState icon={<Percent className="size-5" />} title="No merchant" description="A merchant is provisioned with your organization." />
-            ) : (
-              <>
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <KeyValue label="Percentage fee">
-                    {(merchant.feeBps / 100).toFixed(2)}%
-                  </KeyValue>
-                  <KeyValue label="Fixed fee">
-                    {(merchant.feeFixedMinor / 100).toFixed(2)} {merchant.defaultCurrency}
-                  </KeyValue>
-                  <KeyValue label="Status">
-                    <span className="capitalize">{merchant.status}</span>
-                  </KeyValue>
-                  <KeyValue label="Default currency">{merchant.defaultCurrency}</KeyValue>
-                </div>
-                {canManage && (
-                  <div className="mt-4 space-y-3 rounded-lg border p-4">
-                    <p className="text-sm font-medium">Update plan</p>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <label className="text-sm text-muted-foreground">Percentage (basis points)</label>
-                        <Input
-                          value={feeBps}
-                          onChange={(e) => setFeeBps(e.target.value)}
-                          placeholder={String(merchant.feeBps)}
-                          inputMode="numeric"
-                        />
-                      </div>
-                      <div className="space-y-1.5">
-                        <label className="text-sm text-muted-foreground">Fixed fee (minor units)</label>
-                        <Input
-                          value={feeFixed}
-                          onChange={(e) => setFeeFixed(e.target.value)}
-                          placeholder={String(merchant.feeFixedMinor)}
-                          inputMode="numeric"
-                        />
-                      </div>
-                    </div>
-                    <Button onClick={handleSaveFees} disabled={savingFees} size="sm">
-                      {savingFees ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                      Save fee plan
-                    </Button>
-                  </div>
-                )}
-              </>
-            )}
-          </CardContent>
-        </Card>
+      <section className="space-y-3" aria-labelledby="mem-h">
+        <h2 id="mem-h" className="text-lg font-semibold">Members</h2>
+        {members === undefined ? (
+          <LoadingRows rows={3} />
+        ) : (
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground"><tr><th className="px-4 py-2.5 font-medium">Member</th><th className="px-4 py-2.5 font-medium">Role</th><th className="px-4 py-2.5 font-medium">Joined</th><th /></tr></thead>
+              <tbody className="divide-y">
+                {members.map((m) => {
+                  const self = ctx?.member._id === m._id;
+                  const editable = canManage && !self && (m.role !== "owner" || isOwner);
+                  return (
+                    <tr key={m._id}>
+                      <td className="px-4 py-2.5"><div className="font-medium">{m.name}{self && <span className="ml-1 text-xs text-muted-foreground">(you)</span>}</div><div className="text-xs text-muted-foreground">{m.email ?? "—"}</div></td>
+                      <td className="px-4 py-2.5">
+                        {editable ? (
+                          <select aria-label={`Role for ${m.name}`} className="h-8 rounded-md border bg-background px-2 text-sm" value={m.role} onChange={(e) => void act(() => updateRole({ memberId: m._id, role: e.target.value }), "Role updated")}>
+                            {roleOptions.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                          </select>
+                        ) : (
+                          labelFor(m.role)
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-muted-foreground">{new Date(m.joinedAt).toLocaleDateString()}</td>
+                      <td className="px-4 py-2.5 text-right">{editable && <Button size="sm" variant="ghost" className="text-destructive" onClick={() => setRemoving({ id: m._id, name: m.name })}>Remove</Button>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
-        {/* Environment */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <ShieldCheck className="size-4" /> Environment
-            </CardTitle>
-            <CardDescription>
-              Sandbox and production are strictly separated. Sandbox keys never
-              reach production providers and vice versa.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {orgContext === undefined ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="size-5 animate-spin text-muted-foreground" />
-              </div>
-            ) : orgContext ? (
-              <div className="space-y-4">
-                <KeyValue label="Current environment">
-                  <span className="capitalize">{orgContext.org.environment}</span>
-                </KeyValue>
-                {canManage && (
-                  <div className="flex items-center gap-2">
-                    {(["sandbox", "production"] as const).map((env) => (
-                      <Button
-                        key={env}
-                        size="sm"
-                        variant={orgContext.org.environment === env ? "default" : "outline"}
-                        onClick={() =>
-                          updateEnv({ environment: env })
-                            .then(() => toast.success(`Environment switched to ${env}.`))
-                            .catch((e: unknown) =>
-                              toast.error(e instanceof Error ? e.message : "Switch failed"))
-                        }
-                      >
-                        {env}
-                      </Button>
+      {canInvite && invites && invites.length > 0 && (
+        <section className="space-y-3" aria-labelledby="inv-h">
+          <h2 id="inv-h" className="text-lg font-semibold">Pending invitations</h2>
+          <ul className="divide-y rounded-lg border bg-card text-sm">
+            {invites.map((i) => (
+              <li key={i._id} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                <span>{i.email} <span className="text-muted-foreground">as {labelFor(i.role)}, expires {new Date(i.expiresAt).toLocaleDateString()}</span></span>
+                <Button size="sm" variant="ghost" onClick={() => void act(() => revoke({ invitationId: i._id }), "Invitation revoked")}>Revoke</Button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="space-y-3" aria-labelledby="perm-h">
+        <h2 id="perm-h" className="text-lg font-semibold">What each role can do</h2>
+        {roles === undefined ? (
+          <LoadingRows rows={3} />
+        ) : (
+          <div className="overflow-x-auto rounded-lg border bg-card">
+            <table className="w-full text-sm">
+              <thead className="border-b bg-muted/40 text-xs text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2.5 text-left font-medium">Permission</th>
+                  {roles.map((r) => <th key={r.id} className="px-3 py-2.5 text-center font-medium">{r.label}</th>)}
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {Object.entries(PERMISSION_LABELS).map(([p, label]) => (
+                  <tr key={p}>
+                    <td className="px-3 py-2">{label}</td>
+                    {roles.map((r) => (
+                      <td key={r.id} className="px-3 py-2 text-center">
+                        {r.permissions.includes(p) ? <Check className="mx-auto size-4 text-emerald-600" aria-label="Allowed" /> : <span className="sr-only">Not allowed</span>}
+                      </td>
                     ))}
-                  </div>
-                )}
-                <p className="text-xs text-muted-foreground">
-                  Production mode requires production API keys and a configured
-                  provider adapter. Test keys are rejected outside sandbox.
-                </p>
-              </div>
-            ) : (
-              <p className="py-4 text-center text-sm text-muted-foreground">
-                Sign in to view environment settings.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <AlertDialog open={removing !== null} onOpenChange={(o) => !o && setRemoving(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>They lose access to this organization immediately. Their past actions stay in the audit log.</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => { const r = removing!; setRemoving(null); void act(() => remove({ memberId: r.id }), "Member removed"); }}>Remove member</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

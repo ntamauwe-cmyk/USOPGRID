@@ -1,4 +1,4 @@
-// RAEVOLT customers page (prompt §20) — customers upserted from payment
+// USOPGRID customers page — customers upserted from payment
 // activity, with per-customer drill-down.
 import { useState } from "react";
 import { useQuery } from "convex/react";
@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, EmptyState, StatusPill, KeyValue } from "@/components/raevolt";
+import { PageHeader, EmptyState, StatusPill, KeyValue } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
 import { Users, Loader2, Search, ChevronLeft, ArrowLeftRight } from "lucide-react";
 import { Link } from "react-router";

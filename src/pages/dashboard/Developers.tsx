@@ -1,5 +1,5 @@
-// RAEVOLT developer portal (prompt §31): API keys (shown once, hashed at
-// rest), quickstart, sandbox scenarios and error reference.
+// USOPGRID developer workspace: API keys (shown once, stored hashed, rotatable),
+// API base URL, quickstart, error reference and webhook events.
 import { useState } from "react";
 import { useQuery, useAction, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
@@ -31,15 +31,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, EmptyState } from "@/components/raevolt";
-import { KeyRound, Plus, Copy, Ban, Loader2, Terminal, Check } from "lucide-react";
+import { PageHeader, EmptyState, errorMessage } from "@/components/kit";
+import { useSensitive } from "@/components/StepUp";
+import { apiBaseUrl } from "@/site/routes";
+import { KeyRound, Plus, Copy, Ban, Loader2, Terminal, Check, RotateCw } from "lucide-react";
 import { toast } from "sonner";
 
 // Convex HTTP surface host derived from VITE_CONVEX_URL (.cloud → .site).
-const API_BASE = ((import.meta.env.VITE_CONVEX_URL as string | undefined) ?? "").replace(
-  /\.cloud$/,
-  ".site",
-);
+const API_BASE = apiBaseUrl() ?? "";
 
 function quickstartFor(key: string | null): string {
   return `curl -X POST ${API_BASE || "https://<your-deployment>.convex.site"}/api/v1/payments \\
@@ -47,33 +46,38 @@ function quickstartFor(key: string | null): string {
   -H "Content-Type: application/json" \\
   -H "Idempotency-Key: order_12345" \\
   -d '{
-    "amountMinor": 250000,
+    "amount": 250000,
     "currency": "NGN",
-    "paymentMethod": "card",
+    "payment_method": "card",
+    "country": "NG",
     "reference": "order_12345",
-    "customerEmail": "customer@example.com"
+    "customer": { "email": "customer@example.com" },
+    "metadata": { "simulate": "success" }
   }'`;
 }
 
 const ERRORS: { code: string; http: string; meaning: string }[] = [
-  { code: "validation_error", http: "400", meaning: "A request field is missing or malformed. Fix the payload before retrying." },
-  { code: "unauthorized", http: "401", meaning: "Missing or invalid secret key. Keys are passed as a Bearer token." },
-  { code: "forbidden", http: "403", meaning: "The key's environment cannot reach the requested resource." },
-  { code: "not_found", http: "404", meaning: "No transaction with that id exists in this organization." },
-  { code: "conflict", http: "409", meaning: "Duplicate refund, or an identical request is still in progress." },
+  { code: "authentication_error", http: "401", meaning: "Missing, invalid, revoked or expired key. Pass it as a Bearer token." },
+  { code: "authorization_error", http: "403", meaning: "Publishable key used server-side, or the organization is suspended." },
+  { code: "validation_error", http: "422", meaning: "A field is missing or malformed; the message names it. Fix before retrying." },
   { code: "idempotency_conflict", http: "422", meaning: "This Idempotency-Key was reused with a different request body." },
-  { code: "provider_unavailable", http: "503", meaning: "No provider adapter is reachable for this environment. Retry later." },
-  { code: "rate_limited", http: "429", meaning: "Too many requests for this key within the rate window." },
+  { code: "not_found", http: "404", meaning: "No such object in this organization." },
+  { code: "conflict", http: "409", meaning: "Duplicate reference, request in progress, or refund above the refundable amount." },
+  { code: "rate_limited", http: "429", meaning: "Over 120 requests a minute for this key. Honour Retry-After." },
+  { code: "provider_unavailable", http: "503", meaning: "No provider could take it now. Retry with the same Idempotency-Key." },
+  { code: "processing_error", http: "500", meaning: "Unexpected error. Retry with the same Idempotency-Key; quote the request id." },
 ];
 
 const SANDBOX_EVENTS = [
-  { event: "payment.created", when: "Payment accepted by the engine" },
-  { event: "payment.processing", when: "Sent to the provider adapter" },
-  { event: "payment.successful", when: "Provider confirmed success" },
-  { event: "payment.failed", when: "Provider or risk engine declined" },
-  { event: "payment.refunded", when: "Full or partial refund posted" },
-  { event: "settlement.created", when: "A settlement batch was built" },
-  { event: "settlement.completed", when: "Batch confirmed settled" },
+  { event: "payment.successful", when: "Funds captured and the ledger posted" },
+  { event: "payment.pending", when: "Accepted by the provider, or outcome being confirmed" },
+  { event: "payment.requires_action", when: "The customer must authenticate or approve" },
+  { event: "payment.declined", when: "Issuer, risk or compliance declined it" },
+  { event: "payment.failed", when: "No provider could process it" },
+  { event: "payment.expired", when: "Customer action not completed in time" },
+  { event: "payment.refunded", when: "A full or partial refund completed" },
+  { event: "refund.pending / refund.failed", when: "Refund awaiting confirmation, or refused" },
+  { event: "payment.reconciliation_exception", when: "Provider and USOPGRID records disagree" },
 ];
 
 export default function Developers() {
@@ -82,6 +86,8 @@ export default function Developers() {
 
   const createKey = useAction(api.services.createApiKey);
   const revokeKey = useMutation(api.services.revokeApiKey);
+  const rotateKey = useAction(api.services.rotateApiKey);
+  const sensitive = useSensitive();
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [keyName, setKeyName] = useState("");
@@ -97,15 +103,15 @@ export default function Developers() {
   async function handleCreate() {
     setCreating(true);
     try {
-      const r = await createKey({
+      const r = await sensitive(() => createKey({
         name: keyName.trim() || "Default key",
         environment: keyEnv,
         mode: keyMode,
-      });
+      }));
       setNewKey(r.fullKey);
       setKeyName("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to create key");
+      toast.error(errorMessage(err));
     } finally {
       setCreating(false);
     }
@@ -124,8 +130,15 @@ export default function Developers() {
     <div className="mx-auto max-w-7xl">
       <PageHeader
         title="Developers"
-        description="API keys, quickstart and the sandbox — everything needed to take the first payment programmatically."
+        description="API keys, quickstart and the sandbox: everything needed to take the first payment programmatically."
       />
+      <div className="mb-6 flex flex-wrap items-center gap-3 rounded-lg border bg-card p-4 text-sm">
+        <span className="font-medium">API base URL</span>
+        <code className="rounded bg-muted px-2 py-1 font-mono text-xs">{API_BASE ? `${API_BASE}/api/v1` : "Available once the backend is deployed"}</code>
+        {API_BASE && <Button size="sm" variant="ghost" onClick={() => copy(`${API_BASE}/api/v1`)}><Copy className="size-3.5" /> Copy</Button>}
+        <a className="text-primary hover:underline" href="/developers">Documentation</a>
+        {API_BASE && <a className="text-primary hover:underline" href={`${API_BASE}/api/v1/openapi.json`} target="_blank" rel="noreferrer">OpenAPI spec</a>}
+      </div>
 
       {/* API keys */}
       <Card>
@@ -278,8 +291,27 @@ export default function Developers() {
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : "never"}
+                      {k.expiresAt && <div className="text-xs text-amber-700">Rotated; stops working {new Date(k.expiresAt).toLocaleString()}</div>}
                     </TableCell>
                     <TableCell className="text-right">
+                      {k.status === "active" && !k.expiresAt && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={async () => {
+                            try {
+                              const r = await sensitive(() => rotateKey({ keyId: k._id }));
+                              setNewKey(r.fullKey);
+                              setDialogOpen(true);
+                              toast.success(`New key issued. The old key keeps working until ${new Date(r.oldKeyExpiresAt).toLocaleString()}.`);
+                            } catch (e) {
+                              toast.error(errorMessage(e));
+                            }
+                          }}
+                        >
+                          <RotateCw className="size-3.5" /> Rotate
+                        </Button>
+                      )}
                       {k.status === "active" && (
                         <Button
                           size="sm"

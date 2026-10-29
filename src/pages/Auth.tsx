@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/input-otp";
 
 import { useAuth } from "@/hooks/use-auth";
-import { RaevoltMark, RAEVOLT_TAGLINE } from "@/components/brand";
+import { UsopgridMark, USOPGRID_TAGLINE } from "@/components/brand";
 import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -80,7 +80,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
       const formData = new FormData(event.currentTarget);
       await signIn("email-otp", formData);
 
-      console.log("signed in");
+      
 
       navigate(redirect);
     } catch (error) {
@@ -97,13 +97,10 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     setIsLoading(true);
     setError(null);
     try {
-      console.log("Attempting anonymous sign in...");
       await signIn("anonymous");
-      console.log("Anonymous sign in successful");
       navigate(redirect);
     } catch (error) {
       console.error("Guest login error:", error);
-      console.error("Error details:", JSON.stringify(error, null, 2));
       setError(`Failed to sign in as guest: ${error instanceof Error ? error.message : 'Unknown error'}`);
       setIsLoading(false);
     }
@@ -121,15 +118,14 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
             <>
               <CardHeader className="text-center">
               <div className="flex justify-center">
-                    <RaevoltMark
-                      className="size-16 rounded-xl mb-4 mt-4 cursor-pointer"
-                      onClick={() => navigate("/")}
-                    />
+                    <button type="button" onClick={() => navigate("/")} aria-label="USOPGRID home" className="mb-4 mt-4">
+                      <UsopgridMark className="size-16" />
+                    </button>
                   </div>
-                <CardTitle className="text-xl">Get Started</CardTitle>
-                <CardDescription>{RAEVOLT_TAGLINE}</CardDescription>
+                <CardTitle className="text-xl">Sign in to USOPGRID</CardTitle>
+                <CardDescription>{USOPGRID_TAGLINE}</CardDescription>
                 <CardDescription>
-                  Enter your email to log in or sign up
+                  Enter your work email. We'll send a one-time code.
                 </CardDescription>
               </CardHeader>
               <form onSubmit={handleEmailSubmit}>
@@ -184,7 +180,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       disabled={isLoading}
                     >
                       <UserX className="mr-2 h-4 w-4" />
-                      Continue as Guest
+                      Explore the sandbox as a guest
                     </Button>
                   </div>
                 </CardContent>

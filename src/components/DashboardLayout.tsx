@@ -1,164 +1,252 @@
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "@/convex/_generated/api";
-import { useEffect } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router";
+import { useEffect, useState } from "react";
+import { Link, NavLink, Outlet, useLocation, useNavigate } from "react-router";
 import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { Badge } from "@/components/ui/badge";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import {
-  LayoutDashboard,
-  ArrowLeftRight,
-  Landmark,
-  KeyRound,
-  Webhook,
-  Github,
-  Users,
-  ScrollText,
-  LogOut,
-  ShieldCheck,
-  Loader2,
-  Link2,
-  Send,
-  ShieldAlert,
-  Contact,
+  LayoutDashboard, ArrowLeftRight, Landmark, KeyRound, Webhook, Github, Users, ScrollText, LogOut, Loader2, Link2, Send, ShieldAlert,
+  Contact, Network, Route, Scale, BarChart3, FileText, Building2, Lock, Bell, Activity, Menu,
 } from "lucide-react";
-import { RaevoltLogo } from "@/components/brand";
+import { UsopgridLogo } from "@/components/brand";
+import { StepUpProvider } from "@/components/StepUp";
 
-const NAV = [
-  { to: "/dashboard", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/dashboard/transactions", label: "Transactions", icon: ArrowLeftRight },
-  { to: "/dashboard/customers", label: "Customers", icon: Contact },
-  { to: "/dashboard/links", label: "Payment links", icon: Link2 },
-  { to: "/dashboard/payouts", label: "Payouts", icon: Send },
-  { to: "/dashboard/settlements", label: "Settlements", icon: Landmark },
-  { to: "/dashboard/disputes", label: "Disputes", icon: ShieldAlert },
-  { to: "/dashboard/developers", label: "Developers", icon: KeyRound },
-  { to: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
-  { to: "/dashboard/repositories", label: "Repositories", icon: Github },
-  { to: "/dashboard/team", label: "Team", icon: Users },
-  { to: "/dashboard/audit", label: "Audit log", icon: ScrollText },
+type Item = { to: string; label: string; icon: typeof LayoutDashboard; end?: boolean };
+const GROUPS: { label: string; items: Item[] }[] = [
+  {
+    label: "Payments",
+    items: [
+      { to: "/dashboard", label: "Overview", icon: LayoutDashboard, end: true },
+      { to: "/dashboard/transactions", label: "Transactions", icon: ArrowLeftRight },
+      { to: "/dashboard/customers", label: "Customers", icon: Contact },
+      { to: "/dashboard/links", label: "Payment links", icon: Link2 },
+      { to: "/dashboard/payouts", label: "Payouts", icon: Send },
+      { to: "/dashboard/disputes", label: "Disputes", icon: ShieldAlert },
+    ],
+  },
+  {
+    label: "Orchestration",
+    items: [
+      { to: "/dashboard/providers", label: "Providers", icon: Network },
+      { to: "/dashboard/routing", label: "Routing", icon: Route },
+    ],
+  },
+  {
+    label: "Finance",
+    items: [
+      { to: "/dashboard/settlements", label: "Settlements", icon: Landmark },
+      { to: "/dashboard/reconciliation", label: "Reconciliation", icon: Scale },
+      { to: "/dashboard/analytics", label: "Analytics", icon: BarChart3 },
+      { to: "/dashboard/reports", label: "Reports", icon: FileText },
+    ],
+  },
+  {
+    label: "Developers",
+    items: [
+      { to: "/dashboard/developers", label: "API keys", icon: KeyRound },
+      { to: "/dashboard/webhooks", label: "Webhooks", icon: Webhook },
+      { to: "/dashboard/repositories", label: "Repositories", icon: Github },
+    ],
+  },
+  {
+    label: "Organization",
+    items: [
+      { to: "/dashboard/organization", label: "Organization", icon: Building2 },
+      { to: "/dashboard/team", label: "Team", icon: Users },
+      { to: "/dashboard/security", label: "Security", icon: Lock },
+      { to: "/dashboard/audit", label: "Audit log", icon: ScrollText },
+    ],
+  },
 ];
+
+function Nav({ isPlatformAdmin, onNavigate }: { isPlatformAdmin: boolean; onNavigate?: () => void }) {
+  const groups = isPlatformAdmin
+    ? [...GROUPS, { label: "USOPGRID staff", items: [{ to: "/dashboard/operations", label: "Operations console", icon: Activity }] }]
+    : GROUPS;
+  return (
+    <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Dashboard">
+      {groups.map((g) => (
+        <div key={g.label}>
+          <div className="px-3 pb-1.5 text-[11px] font-medium text-sidebar-foreground/55">{g.label}</div>
+          <div className="space-y-0.5">
+            {g.items.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                onClick={onNavigate}
+                className={({ isActive }: { isActive: boolean }) =>
+                  cn(
+                    "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
+                    isActive ? "bg-sidebar-accent font-medium text-white" : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-white",
+                  )
+                }
+              >
+                <Icon className="size-4 opacity-80" />
+                {label}
+              </NavLink>
+            ))}
+          </div>
+        </div>
+      ))}
+    </nav>
+  );
+}
+
+function EnvironmentCard({ environment }: { environment: string }) {
+  const live = environment === "production";
+  return (
+    <div className="border-t border-sidebar-border p-3">
+      <div className="rounded-md bg-sidebar-accent p-3">
+        <div className="flex items-center gap-2 text-xs font-medium text-white">
+          <span className={cn("size-2 rounded-full", live ? "bg-emerald-400" : "bg-amber-400")} />
+          {live ? "Live environment" : "Sandbox environment"}
+        </div>
+        <p className="mt-1 text-[11px] leading-4 text-sidebar-foreground/75">
+          {live ? "Payments use your live provider connections and move real money." : "Simulated rails and test credentials only. No money moves."}
+        </p>
+      </div>
+    </div>
+  );
+}
 
 export default function DashboardLayout() {
   const { user, signOut, isLoading } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const orgContext = useQuery(api.orgs.getOrgContext, {});
+  const unread = useQuery(api.notifications.unreadCount, orgContext ? {} : "skip");
   const bootstrap = useMutation(api.orgs.bootstrapOrg);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [bootError, setBootError] = useState<string | null>(null);
 
-  // Provision the tenant on first dashboard visit (idempotent).
   useEffect(() => {
     if (!isLoading && user && orgContext === null) {
-      void bootstrap({}).catch((err) => console.error("bootstrap failed", err));
+      bootstrap({}).catch((err: unknown) => setBootError(err instanceof Error ? err.message : "Could not set up your organization."));
     }
   }, [isLoading, user, orgContext, bootstrap]);
 
+  useEffect(() => setMobileOpen(false), [location.pathname]);
+
+  if (bootError) {
+    return (
+      <main className="flex min-h-screen items-center justify-center bg-background p-6 text-center">
+        <div>
+          <p className="font-semibold">We couldn't open your workspace</p>
+          <p className="mt-1 text-sm text-muted-foreground">{bootError}</p>
+          <Button className="mt-4" onClick={() => window.location.reload()}>Try again</Button>
+        </div>
+      </main>
+    );
+  }
+
   if (isLoading || orgContext === undefined || orgContext === null) {
     return (
-      <main className="flex min-h-screen items-center justify-center bg-background">
+      <main className="flex min-h-screen items-center justify-center bg-background" aria-busy="true">
         <Loader2 className="size-6 animate-spin text-muted-foreground" />
+        <span className="sr-only">Loading your workspace</span>
       </main>
     );
   }
 
   const environment = orgContext.org.environment;
+  const suspended = orgContext.org.status !== "active";
 
   return (
-    <div className="flex min-h-screen bg-background">
-      {/* Sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r bg-sidebar md:flex">
-        <div className="flex h-16 items-center gap-2 border-b px-5">
-          <a href="/" className="flex items-center gap-2" aria-label="RAEVOLT home">
-            <RaevoltLogo />
-          </a>
-        </div>
-        <nav className="flex-1 space-y-1 overflow-y-auto p-3">
-          {NAV.map(({ to, label, icon: Icon, end }) => (
-            <NavLink
-              key={to}
-              to={to}
-              end={end}
-              className={({ isActive }) =>
-                cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
-                )
-              }
-            >
-              <Icon className="size-4" />
-              {label}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="border-t p-3">
-          <div className="rounded-md bg-muted p-3">
-            <div className="flex items-center gap-2 text-xs font-medium">
-              <ShieldCheck className="size-3.5 text-chart-2" />
-              Sandbox environment
-            </div>
-            <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-              Test keys only. No live money movement is configured in v1.
-            </p>
+    <StepUpProvider>
+      <div className="flex min-h-screen bg-background">
+        <a href="#dash-main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-background focus:px-3 focus:py-2">Skip to content</a>
+        <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
+          <div className="flex h-16 items-center border-b border-sidebar-border px-5">
+            <Link to="/" aria-label="USOPGRID home" className="text-white">
+              <UsopgridLogo tone="onDark" />
+            </Link>
           </div>
-        </div>
-      </aside>
+          <Nav isPlatformAdmin={orgContext.isPlatformAdmin} />
+          <EnvironmentCard environment={environment} />
+        </aside>
 
-      {/* Main */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex h-16 items-center justify-between border-b bg-background/95 px-4 backdrop-blur md:px-8">
-          <div className="flex items-center gap-3">
-            <Badge
-              variant="outline"
-              className={cn(
-                "font-mono text-[10px] uppercase tracking-wider",
-                environment === "production" ? "border-chart-2 text-chart-2" : "text-muted-foreground",
-              )}
-            >
-              {environment}
-            </Badge>
-            <span className="truncate text-sm font-semibold">{orgContext.org.name}</span>
-          </div>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" className="gap-2">
-                <span className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
-                  {(user?.name ?? user?.email ?? "?").slice(0, 1).toUpperCase()}
-                </span>
-                <span className="hidden text-sm sm:inline">{user?.name ?? user?.email}</span>
+        <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+          <SheetContent side="left" className="flex w-72 flex-col bg-sidebar p-0 text-sidebar-foreground">
+            <SheetTitle className="flex h-16 items-center border-b border-sidebar-border px-5 text-white">
+              <UsopgridLogo tone="onDark" />
+            </SheetTitle>
+            <Nav isPlatformAdmin={orgContext.isPlatformAdmin} onNavigate={() => setMobileOpen(false)} />
+            <EnvironmentCard environment={environment} />
+          </SheetContent>
+        </Sheet>
+
+        <div className="flex min-w-0 flex-1 flex-col">
+          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-8">
+            <div className="flex min-w-0 items-center gap-3">
+              <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation" onClick={() => setMobileOpen(true)}>
+                <Menu className="size-5" />
               </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-56">
-              <DropdownMenuLabel>
-                <div className="text-xs text-muted-foreground">Role</div>
-                <div className="text-sm font-medium capitalize">{orgContext.role}</div>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onClick={async () => {
-                  await signOut();
-                  navigate("/");
-                }}
-                className="cursor-pointer text-destructive focus:text-destructive"
+              <span
+                className={cn(
+                  "rounded-full border px-2.5 py-0.5 text-xs font-medium",
+                  environment === "production" ? "border-emerald-600 text-emerald-700 dark:text-emerald-400" : "border-amber-500 text-amber-700 dark:text-amber-400",
+                )}
               >
-                <LogOut className="mr-2 size-4" /> Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </header>
-        <main className="flex-1 p-4 md:p-8">
-          <Outlet />
-        </main>
+                {environment === "production" ? "Live" : "Sandbox"}
+              </span>
+              <span className="truncate text-sm font-semibold">{orgContext.org.name}</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" asChild aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}>
+                <Link to="/dashboard/notifications" className="relative">
+                  <Bell className="size-5" />
+                  {!!unread && <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">{unread > 9 ? "9+" : unread}</span>}
+                </Link>
+              </Button>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="gap-2">
+                    <span className="flex size-7 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+                      {(user?.name ?? user?.email ?? "?").slice(0, 1).toUpperCase()}
+                    </span>
+                    <span className="hidden max-w-[16ch] truncate text-sm sm:inline">{user?.name ?? user?.email}</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-60">
+                  <DropdownMenuLabel>
+                    <div className="truncate text-sm font-medium">{user?.email ?? user?.name}</div>
+                    <div className="text-xs font-normal text-muted-foreground">{orgContext.roleLabel}</div>
+                  </DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate("/dashboard/security")}>
+                    <Lock className="mr-2 size-4" /> Security settings
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate("/developers")}>
+                    <FileText className="mr-2 size-4" /> Documentation
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={async () => {
+                      await signOut();
+                      navigate("/");
+                    }}
+                    className="text-destructive focus:text-destructive"
+                  >
+                    <LogOut className="mr-2 size-4" /> Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </header>
+          {suspended && (
+            <div role="alert" className="border-b border-orange-300 bg-orange-50 px-4 py-2 text-sm text-orange-900 md:px-8 dark:bg-orange-950 dark:text-orange-200">
+              This organization is {orgContext.org.status}. New payments are blocked. Contact support@usopgrid.com.
+            </div>
+          )}
+          <main id="dash-main" className="flex-1 p-4 md:p-8">
+            <Outlet />
+          </main>
+        </div>
       </div>
-    </div>
+    </StepUpProvider>
   );
 }

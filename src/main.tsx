@@ -7,10 +7,32 @@ import { ConvexReactClient } from "convex/react";
 import React, { StrictMode, useEffect, lazy, Suspense } from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import "./fonts.css";
 import "./index.css";
 
 // Lazy load route components for better code splitting
-const Landing = lazy(() => import("./pages/Landing.tsx"));
+const Home = lazy(() => import("./site/Home.tsx"));
+const SiteDevelopers = lazy(() => import("./site/Developers.tsx"));
+const SitePages = import("./site/Pages.tsx");
+const Platform = lazy(() => SitePages.then((m) => ({ default: m.Platform })));
+const Orchestration = lazy(() => SitePages.then((m) => ({ default: m.Orchestration })));
+const Integrations = lazy(() => SitePages.then((m) => ({ default: m.Integrations })));
+const Enterprise = lazy(() => SitePages.then((m) => ({ default: m.Enterprise })));
+const SecurityPage = lazy(() => SitePages.then((m) => ({ default: m.Security })));
+const Privacy = lazy(() => SitePages.then((m) => ({ default: () => m.Legal({ page: "privacy" }) })));
+const Terms = lazy(() => SitePages.then((m) => ({ default: () => m.Legal({ page: "terms" }) })));
+const Disclosures = lazy(() => SitePages.then((m) => ({ default: () => m.Legal({ page: "disclosures" }) })));
+const ContactRoute = lazy(() => import("./site/routes.tsx").then((m) => ({ default: m.ContactRoute })));
+const StatusRoute = lazy(() => import("./site/routes.tsx").then((m) => ({ default: m.StatusRoute })));
+const Providers = lazy(() => import("./pages/dashboard/Providers.tsx"));
+const Routing = lazy(() => import("./pages/dashboard/Routing.tsx"));
+const Reconciliation = lazy(() => import("./pages/dashboard/Reconciliation.tsx"));
+const Analytics = lazy(() => import("./pages/dashboard/Analytics.tsx"));
+const Reports = lazy(() => import("./pages/dashboard/Reports.tsx"));
+const Organization = lazy(() => import("./pages/dashboard/Organization.tsx"));
+const SecuritySettings = lazy(() => import("./pages/dashboard/Security.tsx"));
+const Notifications = lazy(() => import("./pages/dashboard/Notifications.tsx"));
+const Operations = lazy(() => import("./pages/dashboard/Operations.tsx"));
 const AuthPage = lazy(() => import("./pages/Auth.tsx"));
 const Dashboard = lazy(() => import("./pages/Dashboard.tsx"));
 const Overview = lazy(() => import("./pages/dashboard/Overview.tsx"));
@@ -32,8 +54,8 @@ const NotFound = lazy(() => import("./pages/NotFound.tsx"));
 // Simple loading fallback for route transitions
 function RouteLoading() {
   return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-pulse text-muted-foreground">Loading...</div>
+    <div className="min-h-screen flex items-center justify-center" aria-busy="true">
+      <div className="animate-pulse text-muted-foreground">Loading…</div>
     </div>
   );
 }
@@ -133,7 +155,19 @@ createRoot(document.getElementById("root")!).render(
           <RouteSyncer />
           <Suspense fallback={<RouteLoading />}>
             <Routes>
-              <Route path="/" element={<Landing />} />
+              <Route path="/" element={<Home />} />
+              <Route path="/platform" element={<Platform />} />
+              <Route path="/orchestration" element={<Orchestration />} />
+              <Route path="/integrations" element={<Integrations />} />
+              <Route path="/developers" element={<SiteDevelopers />} />
+              <Route path="/docs" element={<SiteDevelopers />} />
+              <Route path="/enterprise" element={<Enterprise />} />
+              <Route path="/security" element={<SecurityPage />} />
+              <Route path="/contact" element={<ContactRoute />} />
+              <Route path="/status" element={<StatusRoute />} />
+              <Route path="/privacy" element={<Privacy />} />
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/disclosures" element={<Disclosures />} />
               <Route
                 path="/auth"
                 element={<AuthPage redirectAfterAuth="/dashboard" />}
@@ -159,6 +193,15 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="repositories" element={<Repositories />} />
                 <Route path="team" element={<Team />} />
                 <Route path="audit" element={<Audit />} />
+                <Route path="providers" element={<Providers />} />
+                <Route path="routing" element={<Routing />} />
+                <Route path="reconciliation" element={<Reconciliation />} />
+                <Route path="analytics" element={<Analytics />} />
+                <Route path="reports" element={<Reports />} />
+                <Route path="organization" element={<Organization />} />
+                <Route path="security" element={<SecuritySettings />} />
+                <Route path="notifications" element={<Notifications />} />
+                <Route path="operations" element={<Operations />} />
               </Route>
               <Route path="/pay/:linkId" element={<Checkout />} />
               <Route path="*" element={<NotFound />} />

@@ -1,4 +1,4 @@
-// RAEVOLT audit page (prompt §39): actor, action, resource, before/after.
+// USOPGRID audit page: actor, action, resource, before/after.
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { PageHeader, EmptyState } from "@/components/raevolt";
+import { PageHeader, EmptyState } from "@/components/kit";
 import { ScrollText, Loader2 } from "lucide-react";
 
 export default function Audit() {

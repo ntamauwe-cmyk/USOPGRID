@@ -1,4 +1,4 @@
-// RAEVOLT payouts page (prompt §25, §26) — beneficiaries, payout creation and
+// USOPGRID payouts page — beneficiaries, payout creation and
 // the payout status pipeline (PENDING → PROCESSING → SUCCESSFUL | FAILED).
 import { useState } from "react";
 import { useQuery, useAction, useMutation } from "convex/react";
@@ -30,7 +30,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, EmptyState, StatusPill } from "@/components/raevolt";
+import { PageHeader, EmptyState, StatusPill } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
 import {
   Landmark,
@@ -265,7 +265,7 @@ export default function Payouts() {
           <DialogHeader>
             <DialogTitle>Add a beneficiary</DialogTitle>
             <DialogDescription>
-              The account number is hashed and masked — RAEVOLT never stores it in
+              The account number is hashed and masked — USOPGRID never stores it in
               plaintext.
             </DialogDescription>
           </DialogHeader>
