@@ -43,7 +43,7 @@ export function parseBulkPayoutCsv(text: string): BulkParse {
   const out: BulkParse = { rows: [], errors: [], totalsByCurrency: {} };
   let table: string[][];
   try {
-    table = parseCsv(text.replace(/^﻿/, ""));
+    table = parseCsv(text.replace(/^\uFEFF/, ""));
   } catch (err) {
     out.errors.push({ line: 1, message: err instanceof Error ? err.message : "The file is not valid CSV." });
     return out;
