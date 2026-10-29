@@ -211,7 +211,6 @@ export default function Overview() {
   });
 
   const currency = stats?.primaryCurrency ?? "USD";
-  const total = stats?.total ?? 0;
 
   return (
     <div className="mx-auto max-w-7xl">
@@ -391,10 +390,10 @@ export default function Overview() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Reference</TableHead>
-                  <TableHead>Customer</TableHead>
+                  <TableHead className="hidden sm:table-cell">Customer</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead />
+                  <TableHead className="hidden sm:table-cell" />
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -406,12 +405,12 @@ export default function Overview() {
                         <div className="text-[11px] text-muted-foreground">{t.paymentMethod.replace(/_/g, " ")}</div>
                       </Link>
                     </TableCell>
-                    <TableCell className="text-sm">{t.customerEmail ?? "—"}</TableCell>
+                    <TableCell className="hidden max-w-[16rem] truncate text-sm sm:table-cell">{t.customerEmail ?? "—"}</TableCell>
                     <TableCell className="text-right font-medium tabular-nums">
                       {formatMoney(t.amountMinor, t.currency)}
                     </TableCell>
                     <TableCell><StatusPill status={t.status} /></TableCell>
-                    <TableCell className="text-right">
+                    <TableCell className="hidden text-right sm:table-cell">
                       <ChevronRight className="size-4 text-muted-foreground" />
                     </TableCell>
                   </TableRow>

@@ -32,8 +32,10 @@ function UploadDialog({ providers, onClose }: { providers: { id: string; display
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<{ rows: number; matched: number; exceptions: number; parseErrors: string[] } | null>(null);
-  const today = new Date().toISOString().slice(0, 10);
-  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+  const [{ today, weekAgo }] = useState(() => {
+    const now = Date.now();
+    return { today: new Date(now).toISOString().slice(0, 10), weekAgo: new Date(now - 7 * 86_400_000).toISOString().slice(0, 10) };
+  });
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();

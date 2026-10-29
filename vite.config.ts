@@ -4,9 +4,14 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 import { defineConfig } from "vite";
 
+// The editor-platform plugin injects scripts that load third-party code from a
+// public CDN and post page contents/errors to any parent window. It is only
+// for the editor's live preview, never for production builds.
+const editorPreview = process.env.VITE_EDITOR_PREVIEW === "true";
+
 // https://vite.dev/config/
-export default defineConfig({
-  plugins: [react(), vlyPlugin(), tailwindcss()],
+export default defineConfig(({ command }) => ({
+  plugins: [react(), ...(command === "serve" || editorPreview ? [vlyPlugin()] : []), tailwindcss()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -97,4 +102,4 @@ export default defineConfig({
       overlay: false,
     },
   },
-});
+}));

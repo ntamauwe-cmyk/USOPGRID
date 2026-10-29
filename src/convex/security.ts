@@ -6,15 +6,21 @@ import { action, internalMutation, internalQuery, mutation, query } from "./_gen
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { getAuthUserId } from "@convex-dev/auth/server";
-import { generateTotpSecret, openSecret, randomToken, sealSecret, sha256Hex, verifyTotp } from "./lib/crypto";
+import { generateTotpSecret, randomToken, sha256Hex, verifyTotp } from "./lib/crypto";
+import { seal, open, keyringConfigured } from "./lib/keyring";
+import type { ActionCtx } from "./_generated/server";
 import { requireOrgMember, requirePermissionFor, requireStepUp, STEP_UP_WINDOW_MS } from "./lib/rbac";
 import { PERMISSIONS } from "./schema";
 import { logAudit } from "./lib/audit";
 
-function encKey(): string {
-  const k = process.env.USOPGRID_ENCRYPTION_KEY;
-  if (!k) throw new ConvexError("MFA is unavailable: USOPGRID_ENCRYPTION_KEY is not configured.");
-  return k;
+/** 10 code attempts per user per 15 minutes (TOTP and recovery codes alike). */
+async function limitAttempts(ctx: ActionCtx, userId: string): Promise<void> {
+  const r = (await ctx.runMutation(internal.lib.httpserviceInternal.consumeBucketInternal, { bucket: `mfa_attempt:${userId}`, limit: 10, windowMs: 15 * 60_000 })) as { ok: boolean; retryAfterMs: number };
+  if (!r.ok) throw new ConvexError(`Too many attempts. Try again in ${Math.ceil(r.retryAfterMs / 60_000)} minute(s).`);
+}
+
+function requireEncryption(): void {
+  if (!keyringConfigured()) throw new ConvexError("MFA is unavailable: the encryption key is not configured.");
 }
 
 export const status = query({
@@ -28,7 +34,7 @@ export const status = query({
       recoveryCodesRemaining: mfa?.recoveryCodeHashes?.length ?? 0,
       orgPolicy: { requireMfaForSensitive: oc.org.security?.requireMfaForSensitive ?? false },
       canManagePolicy: oc.permissions.has(PERMISSIONS.SECURITY_MANAGE),
-      encryptionConfigured: Boolean(process.env.USOPGRID_ENCRYPTION_KEY),
+      encryptionConfigured: keyringConfigured(),
     };
   },
 });
@@ -61,7 +67,7 @@ export const beginEnrollment = action({
     if (!userId) throw new ConvexError("UNAUTHENTICATED");
     const email: string | null = await ctx.runQuery(internal.security.userEmailInternal, { userId });
     const secret = generateTotpSecret();
-    await ctx.runMutation(internal.security.savePendingInternal, { userId, sealedSecret: await sealSecret(secret, encKey(), `mfa:${userId}`) });
+    await ctx.runMutation(internal.security.savePendingInternal, { userId, sealedSecret: (requireEncryption(), await seal(secret, `mfa:${userId}`)) });
     const label = encodeURIComponent(`USOPGRID:${email ?? userId}`);
     return { otpauthUrl: `otpauth://totp/${label}?secret=${secret}&issuer=USOPGRID&algorithm=SHA1&digits=6&period=30`, secret };
   },
@@ -93,7 +99,8 @@ export const verifyCode = action({
     if (!userId) throw new ConvexError("UNAUTHENTICATED");
     const row = await ctx.runQuery(internal.security.mfaRowInternal, { userId });
     if (!row) throw new ConvexError("MFA not enrolled");
-    const secret = await openSecret(row.sealedSecret, encKey(), `mfa:${userId}`);
+    await limitAttempts(ctx, userId);
+    const secret = (requireEncryption(), await open(row.sealedSecret, `mfa:${userId}`));
     const counter = await verifyTotp(secret, code.replace(/\s+/g, ""), Date.now());
     if (counter === null) throw new ConvexError("Invalid code");
     let recoveryCodes: string[] | undefined;
@@ -122,6 +129,7 @@ export const useRecoveryCode = action({
   handler: async (ctx, { code }) => {
     const userId = await getAuthUserId(ctx);
     if (!userId) throw new ConvexError("UNAUTHENTICATED");
+    await limitAttempts(ctx, userId);
     await ctx.runMutation(internal.security.useRecoveryCodeInternal, { userId: userId as Id<"users">, hash: await sha256Hex(`usopgrid-recovery:${code.trim().toLowerCase()}`) });
     return { ok: true };
   },

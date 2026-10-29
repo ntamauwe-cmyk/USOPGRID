@@ -131,12 +131,41 @@ export interface RefundResult {
   failure?: FailureInfo;
 }
 
+export interface PayoutBeneficiary {
+  name: string;
+  /** Full account number / wallet number, decrypted only inside the payout action. */
+  accountNumber: string;
+  bankCode?: string;
+  bankName?: string;
+  /** ISO 3166-1 alpha-2 of the receiving account. */
+  country?: string;
+  type: "bank_account" | "mobile_money";
+}
+
+export interface PayoutRequest {
+  payoutId: string;
+  /** Stable per payout + connection; providers de-duplicate on it. ≥16 chars. */
+  reference: string;
+  amountMinor: number;
+  currency: string;
+  narration?: string;
+  beneficiary: PayoutBeneficiary;
+  metadata?: Record<string, unknown>;
+}
+
+export interface PayoutResult {
+  status: "successful" | "pending" | "failed" | "unknown";
+  providerReference?: string;
+  providerStatus?: string;
+  failure?: FailureInfo;
+}
+
 /** Provider event normalized from an inbound webhook. */
 export interface ProviderEvent {
   /** Provider's unique event id — used for duplicate suppression. */
   eventId: string;
-  type: "payment" | "refund" | "dispute" | "other";
-  status?: ChargeStatus | "refunded" | "partially_refunded" | "dispute_opened" | "dispute_won" | "dispute_lost";
+  type: "payment" | "refund" | "dispute" | "payout" | "other";
+  status?: ChargeStatus | "refunded" | "partially_refunded" | "dispute_opened" | "dispute_won" | "dispute_lost" | "payout_successful" | "payout_failed" | "payout_reversed";
   providerReference?: string;
   /** Our reference / transactionId if the provider echoes it back. */
   reference?: string;
@@ -158,7 +187,7 @@ export type Environment = "sandbox" | "production";
 export interface AdapterContext {
   environment: Environment;
   credentials: Record<string, string>;
-  fetch: typeof fetch;
+  fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
   now: () => number;
   /** Public base URL providers call back to (webhooks, redirects). */
   callbackBaseUrl?: string;
@@ -194,7 +223,11 @@ export interface ProviderDescriptor {
     partialRefund: boolean;
     webhooks: boolean;
     settlementReports: boolean;
+    /** Can send money to third-party bank / mobile-money accounts. */
+    payouts?: boolean;
   };
+  /** Currencies this provider can pay out in (when operations.payouts). */
+  payoutCurrencies?: readonly string[];
   /** Optional per-currency bounds in minor units. */
   limits?: Record<string, { minMinor?: number; maxMinor?: number }>;
   /** Published list pricing used for cost-aware routing until real costs are observed. */
@@ -212,6 +245,10 @@ export interface ProviderAdapter {
   refund(ctx: AdapterContext, req: RefundRequest): Promise<RefundResult>;
   verifyWebhook(ctx: AdapterContext, input: WebhookInput): Promise<boolean>;
   parseWebhook(ctx: AdapterContext, input: WebhookInput): ProviderEvent[];
+  /** Send money to a third-party account (only when descriptor.operations.payouts). */
+  payout?(ctx: AdapterContext, req: PayoutRequest): Promise<PayoutResult>;
+  /** Look up a payout by our reference (and provider reference when known). */
+  getPayoutStatus?(ctx: AdapterContext, q: { reference: string; providerReference?: string; currency: string }): Promise<PayoutResult>;
 }
 
 export class ProviderUnavailableError extends Error {}

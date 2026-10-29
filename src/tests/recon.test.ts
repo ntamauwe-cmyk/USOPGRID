@@ -33,7 +33,7 @@ describe("reconcile", () => {
       { line: 6, providerReference: "p4", amountMinor: 4000, currency: "USD" },
     ];
     const r = reconcile(report, expected);
-    const types = r.findings.map((f) => f.type).sort();
+    const types: string[] = r.findings.map((f) => f.type).sort();
     expect(types).toEqual(["amount_mismatch", "duplicate", "fee_discrepancy", "missing_in_provider_report", "missing_in_usopgrid", "status_mismatch"].sort());
     expect(r.matched).toBe(2);
     expect(r.totals.USD.expectedMinor).toBe(6000);

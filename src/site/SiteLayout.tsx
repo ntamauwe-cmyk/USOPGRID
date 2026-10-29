@@ -28,10 +28,16 @@ export function usePageMeta(title: string, description?: string) {
 }
 
 export function SiteLayout({ children }: { children: ReactNode }) {
-  const [open, setOpen] = useState(false);
   const loc = useLocation();
+  // Menu stays open only on the page it was opened from; navigation closes it.
+  const here = loc.pathname + loc.hash;
+  const [openedOn, setOpenedOn] = useState<string | null>(null);
+  const open = openedOn === here;
+  const setOpen = (v: boolean | ((o: boolean) => boolean)) => {
+    const next = typeof v === "function" ? v(open) : v;
+    setOpenedOn(next ? here : null);
+  };
   useEffect(() => {
-    setOpen(false);
     if (!loc.hash) window.scrollTo(0, 0);
   }, [loc.pathname, loc.hash]);
 

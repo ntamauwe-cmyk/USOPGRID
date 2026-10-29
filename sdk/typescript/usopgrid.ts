@@ -50,14 +50,16 @@ export interface Payment {
 }
 
 export class UsopgridError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly status: number,
-    public readonly retryable: boolean,
-    public readonly requestId?: string,
-  ) {
+  readonly code: string;
+  readonly status: number;
+  readonly retryable: boolean;
+  readonly requestId?: string;
+  constructor(code: string, message: string, status: number, retryable: boolean, requestId?: string) {
     super(message);
+    this.code = code;
+    this.status = status;
+    this.retryable = retryable;
+    this.requestId = requestId;
     this.name = "UsopgridError";
   }
 }

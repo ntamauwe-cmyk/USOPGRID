@@ -1,7 +1,7 @@
 // USOPGRID payouts page — beneficiaries, payout creation and
 // the payout status pipeline (PENDING → PROCESSING → SUCCESSFUL | FAILED).
 import { useState } from "react";
-import { useQuery, useAction, useMutation } from "convex/react";
+import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,8 +13,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+  } from "@/components/ui/dialog";
 import {
   Select,
   SelectContent,
@@ -30,8 +29,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { PageHeader, EmptyState, StatusPill } from "@/components/kit";
-import { formatMoney } from "@/lib/money";
+import { PageHeader, EmptyState, StatusPill, errorMessage, isStepUpError } from "@/components/kit";
+import { useSensitive } from "@/components/StepUp";
+import { formatMoney, decimalToMinor, currencyDecimals } from "@/lib/money";
 import {
   Landmark,
   Loader2,
@@ -48,6 +48,13 @@ const BANKS = [
   "Sterling Bank", "Union Bank", "UBA", "Wema Bank", "Zenith Bank",
 ];
 
+// Currencies with at least one payout-capable provider adapter, and a default country.
+const PAYOUT_CURRENCIES: [string, string][] = [
+  ["NGN", "NG"], ["GHS", "GH"], ["KES", "KE"], ["ZAR", "ZA"], ["UGX", "UG"], ["TZS", "TZ"],
+  ["RWF", "RW"], ["ZMW", "ZM"], ["XAF", "CM"], ["XOF", "SN"], ["EGP", "EG"], ["ETB", "ET"],
+  ["USD", "US"], ["EUR", "DE"], ["GBP", "GB"],
+];
+
 const SIMULATIONS = [
   { value: "success", label: "Successful payout" },
   { value: "timeout", label: "Provider timeout (reversible)" },
@@ -59,9 +66,11 @@ export default function Payouts() {
   const payouts = useQuery(api.payouts.listPayouts, {
     paginationOpts: { numItems: 10, cursor: null },
   });
-  const balances = useQuery(api.services.getSettlementSummary, {});
 
-  const createBeneficiary = useMutation(api.payouts.createBeneficiary);
+  const orgContext = useQuery(api.orgs.getOrgContext, {});
+  const environment = orgContext?.org?.environment ?? "sandbox";
+  const createBeneficiary = useAction(api.payouts.createBeneficiary);
+  const sensitive = useSensitive();
   const createPayout = useAction(api.payouts.createDashboardPayout);
 
   const [benOpen, setBenOpen] = useState(false);
@@ -69,6 +78,9 @@ export default function Payouts() {
   const [bBank, setBBank] = useState("");
   const [bAccount, setBAccount] = useState("");
   const [bCurrency, setBCurrency] = useState("NGN");
+  const [bBankCode, setBBankCode] = useState("");
+  const [bType, setBType] = useState<"bank_account" | "mobile_money">("bank_account");
+  const [bCountry, setBCountry] = useState("NG");
   const [savingBen, setSavingBen] = useState(false);
 
   const [payOpen, setPayOpen] = useState(false);
@@ -81,19 +93,25 @@ export default function Payouts() {
   async function handleCreateBeneficiary() {
     setSavingBen(true);
     try {
-      await createBeneficiary({
-        name: bName,
-        bankName: bBank,
-        accountNumber: bAccount.replace(/\s+/g, ""),
-        currency: bCurrency,
-      });
-      toast.success("Beneficiary added and verified.");
+      await sensitive(() =>
+        createBeneficiary({
+          name: bName,
+          bankName: bBank,
+          bankCode: bBankCode.trim() || undefined,
+          accountNumber: bAccount.replace(/\s+/g, ""),
+          currency: bCurrency,
+          country: bCountry || undefined,
+          accountType: bType,
+        }),
+      );
+      toast.success("Beneficiary added. The account number is stored encrypted.");
       setBenOpen(false);
       setBName("");
       setBBank("");
       setBAccount("");
+      setBBankCode("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Failed to add beneficiary");
+      if (!isStepUpError(err)) toast.error(errorMessage(err));
     } finally {
       setSavingBen(false);
     }
@@ -104,25 +122,33 @@ export default function Payouts() {
       toast.error("Choose a beneficiary.");
       return;
     }
-    const amountMinor = Math.round(Number(pAmount) * 100);
-    if (!Number.isFinite(amountMinor) || amountMinor <= 0) {
+    const ben = verifiedBens.find((b) => b._id === pBeneficiary);
+    let amountMinor = NaN;
+    try {
+      amountMinor = decimalToMinor(pAmount.trim(), ben?.currency ?? "NGN");
+    } catch {
+      amountMinor = NaN;
+    }
+    if (!Number.isSafeInteger(amountMinor) || amountMinor <= 0) {
       toast.error("Enter a valid amount.");
       return;
     }
     setSending(true);
     try {
-      const r = await createPayout({
-        beneficiaryId: pBeneficiary as never,
-        amountMinor,
-        narration: pNarration || undefined,
-        simulate: pSimulate,
-      });
+      const r = await sensitive(() =>
+        createPayout({
+          beneficiaryId: pBeneficiary as never,
+          amountMinor,
+          narration: pNarration || undefined,
+          simulate: environment === "sandbox" ? pSimulate : undefined,
+        }),
+      );
       toast.success(`Payout ${r.payoutId} — ${r.status.toLowerCase().replace(/_/g, " ")}.`);
       setPayOpen(false);
       setPAmount("");
       setPNarration("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Payout failed");
+      if (!isStepUpError(err)) toast.error(errorMessage(err));
     } finally {
       setSending(false);
     }
@@ -152,8 +178,8 @@ export default function Payouts() {
         <CardHeader>
           <CardTitle className="text-base">Beneficiaries</CardTitle>
           <CardDescription>
-            Account numbers are never stored — only a masked display and a hash for
-            duplicate detection.
+            Account numbers are stored encrypted (AES-256-GCM) and only ever shown
+            masked. They are decrypted solely to instruct the payout provider.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -265,8 +291,8 @@ export default function Payouts() {
           <DialogHeader>
             <DialogTitle>Add a beneficiary</DialogTitle>
             <DialogDescription>
-              The account number is hashed and masked — USOPGRID never stores it in
-              plaintext.
+              The account number is encrypted at rest and never shown again in full.
+              Live payouts need a connected payout provider (Paystack or Flutterwave).
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -275,7 +301,17 @@ export default function Payouts() {
               <Input value={bName} onChange={(e) => setBName(e.target.value)} placeholder="Ada Lovelace" />
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Bank</label>
+              <label className="text-sm font-medium">Account type</label>
+              <Select value={bType} onValueChange={(x) => setBType(x as "bank_account" | "mobile_money")}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="bank_account">Bank account</SelectItem>
+                  <SelectItem value="mobile_money">Mobile money wallet</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{bType === "mobile_money" ? "Network" : "Bank"}</label>
               <Select value={bBank} onValueChange={setBBank}>
                 <SelectTrigger><SelectValue placeholder="Select a bank" /></SelectTrigger>
                 <SelectContent>
@@ -286,19 +322,36 @@ export default function Payouts() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Account number</label>
+              <label className="text-sm font-medium">
+                Bank or network code <span className="font-normal text-muted-foreground">(as the payout provider lists it, e.g. 058)</span>
+              </label>
+              <Input value={bBankCode} onChange={(e) => setBBankCode(e.target.value)} placeholder="058" />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">{bType === "mobile_money" ? "Wallet phone number" : "Account number"}</label>
               <Input value={bAccount} onChange={(e) => setBAccount(e.target.value)} placeholder="0123456789" inputMode="numeric" />
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Currency</label>
-              <Select value={bCurrency} onValueChange={setBCurrency}>
+              <Select
+                value={bCurrency}
+                onValueChange={(c) => {
+                  setBCurrency(c);
+                  const match = PAYOUT_CURRENCIES.find(([code]) => code === c);
+                  if (match) setBCountry(match[1]);
+                }}
+              >
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {["NGN", "USD", "GHS", "KES"].map((c) => (
-                    <SelectItem key={c} value={c}>{c}</SelectItem>
+                  {PAYOUT_CURRENCIES.map(([c, country]) => (
+                    <SelectItem key={c} value={c}>{c} · {country}</SelectItem>
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Country (ISO code)</label>
+              <Input value={bCountry} maxLength={2} onChange={(e) => setBCountry(e.target.value.toUpperCase())} placeholder="NG" />
             </div>
           </div>
           <DialogFooter>
@@ -336,12 +389,18 @@ export default function Payouts() {
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Amount</label>
-              <Input value={pAmount} onChange={(e) => setPAmount(e.target.value)} placeholder="5000.00" inputMode="decimal" />
+              <Input
+                value={pAmount}
+                onChange={(e) => setPAmount(e.target.value)}
+                placeholder={currencyDecimals(verifiedBens.find((b) => b._id === pBeneficiary)?.currency ?? "NGN") === 0 ? "5000" : "5000.00"}
+                inputMode="decimal"
+              />
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Narration</label>
               <Input value={pNarration} onChange={(e) => setPNarration(e.target.value)} placeholder="Invoice settlement" />
             </div>
+            {environment === "sandbox" && (
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Sandbox scenario</label>
               <Select value={pSimulate} onValueChange={setPSimulate}>
@@ -353,6 +412,7 @@ export default function Payouts() {
                 </SelectContent>
               </Select>
             </div>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={handleSendPayout} disabled={sending}>

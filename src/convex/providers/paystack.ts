@@ -5,7 +5,7 @@
 // Paystack reference, so Paystack itself rejects a duplicate initialization.
 // Webhooks: x-paystack-signature = HMAC-SHA512(secret key, raw body), hex.
 
-import type { ProviderAdapter, ChargeResult } from "./types";
+import type { ProviderAdapter, ChargeResult, PayoutResult, PayoutBeneficiary } from "./types";
 import { failure } from "./types";
 import { providerFetch, classifyHttpFailure, unknownOutcome, requireCredential, str, get, callbackUrl } from "./http";
 import { hmacHex, timingSafeEqual } from "../lib/crypto";
@@ -54,6 +54,35 @@ function mapTxn(j: unknown): ChargeResult {
   }
 }
 
+// Transfers (payouts): POST /transferrecipient then POST /transfer from the
+// Paystack balance. Docs: https://paystack.com/docs/transfers/single-transfers/
+// The reference is ours and stable, so a retried transfer is de-duplicated by
+// Paystack. Transfers must not require OTP (disable "OTP for transfers" in the
+// Paystack dashboard), otherwise they are reported as a configuration error.
+function recipientType(currency: string, b: PayoutBeneficiary): string | null {
+  if (b.type === "mobile_money") return currency === "GHS" || currency === "KES" ? "mobile_money" : null;
+  return ({ NGN: "nuban", ZAR: "basa", GHS: "ghipss", KES: "kepss" } as Record<string, string>)[currency] ?? null;
+}
+
+function mapTransfer(j: unknown): PayoutResult {
+  const d = get(j, "data");
+  const s = str(d, "status");
+  const ref = str(d, "transfer_code") ?? str(d, "reference");
+  switch (s) {
+    case "success":
+      return { status: "successful", providerReference: ref, providerStatus: s };
+    case "failed":
+    case "reversed":
+      return { status: "failed", providerReference: ref, providerStatus: s, failure: failure("temporary_provider_failure", `transfer_${s}`, str(d, "reason") ?? `Transfer ${s}.`) };
+    case "otp":
+      return { status: "failed", providerReference: ref, providerStatus: s, failure: failure("configuration_error", "transfer_otp_required", "Paystack requires OTP for transfers. Disable OTP for API transfers in the Paystack dashboard.") };
+    case "abandoned":
+      return { status: "failed", providerReference: ref, providerStatus: s, failure: failure("temporary_provider_failure", "transfer_abandoned", "Transfer was abandoned.") };
+    default:
+      return { status: "pending", providerReference: ref, providerStatus: s };
+  }
+}
+
 export const paystackAdapter: ProviderAdapter = {
   descriptor: {
     id: "paystack",
@@ -65,7 +94,8 @@ export const paystackAdapter: ProviderAdapter = {
     countries: ["NG", "GH", "ZA", "KE", "CI", "EG", "RW"],
     currencies: ["NGN", "GHS", "ZAR", "KES", "USD", "XOF", "EGP", "RWF"],
     methods: ["card", "bank_transfer", "ussd", "mobile_money", "qr", "open_banking"],
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true },
+    payoutCurrencies: ["NGN", "GHS", "ZAR", "KES"],
     limits: { NGN: { minMinor: 5_000 }, GHS: { minMinor: 10 }, KES: { minMinor: 300 } },
     pricing: { pctBps: 150, fixedMinor: 10_000, fixedCurrency: "NGN", capMinor: 200_000, notes: "Nigeria local: 1.5% + ₦100 (waived < ₦2,500), capped at ₦2,000." },
     credentials: [{ key: "secretKey", label: "Secret key (sk_…)", secret: true, required: true }],
@@ -149,6 +179,48 @@ export const paystackAdapter: ProviderAdapter = {
     return f ? { status: "failed", failure: f } : { status: "unknown", failure: unknownOutcome(o, NAME) };
   },
 
+  async payout(ctx, req) {
+    const auth = { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}`, "Content-Type": "application/json" };
+    const type = recipientType(req.currency, req.beneficiary);
+    if (!type) return { status: "failed", failure: failure("unsupported", "payout_unsupported", `Paystack cannot pay out ${req.currency} to this account type.`, { safeToFailover: true }) };
+    if (!req.beneficiary.bankCode) return { status: "failed", failure: failure("invalid_payment_information", "bank_code_required", "A bank (or mobile network) code is required for Paystack transfers.", { safeToFailover: true }) };
+    const r = await providerFetch(ctx, `${API}/transferrecipient`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ type, name: req.beneficiary.name, account_number: req.beneficiary.accountNumber, bank_code: req.beneficiary.bankCode, currency: req.currency }),
+    });
+    if (!(r.kind === "response" && (r.status === 200 || r.status === 201) && get(r.json, "status") === true)) {
+      // Nothing has been sent yet: any failure here is safe to retry elsewhere.
+      const msg = r.kind === "response" ? (str(r.json, "message") ?? `HTTP ${r.status}`) : "Paystack unreachable";
+      return { status: "failed", failure: failure(r.kind === "response" && r.status === 400 ? "invalid_payment_information" : "temporary_provider_failure", "recipient_rejected", `Paystack rejected the recipient: ${msg}`, { safeToFailover: true, retryable: r.kind !== "response" }) };
+    }
+    const recipient = str(r.json, "data.recipient_code");
+    const o = await providerFetch(ctx, `${API}/transfer`, {
+      method: "POST",
+      headers: auth,
+      body: JSON.stringify({ source: "balance", amount: req.amountMinor, reference: req.reference, recipient, reason: req.narration?.slice(0, 100) }),
+    });
+    if (o.kind === "response" && o.status === 200 && get(o.json, "status") === true) return mapTransfer(o.json);
+    if (o.kind === "response" && o.status === 400 && /duplicate|already/i.test(str(o.json, "message") ?? "")) {
+      return { status: "unknown", failure: unknownOutcome(o, NAME) };
+    }
+    const f = classifyHttpFailure(o, NAME);
+    if (f) return { status: "failed", failure: { ...f, message: `${f.message} ${str(o.kind === "response" ? o.json : null, "message") ?? ""}`.trim() } };
+    return { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
+  async getPayoutStatus(ctx, q) {
+    const o = await providerFetch(ctx, `${API}/transfer/verify/${encodeURIComponent(q.reference)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}` },
+    });
+    if (o.kind === "response" && o.status === 200) return mapTransfer(o.json);
+    if (o.kind === "response" && o.status === 404) {
+      return { status: "failed", failure: failure("network_error", "not_found_at_provider", "Paystack has no transfer with this reference.", { safeToFailover: true }) };
+    }
+    return { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
   async verifyWebhook(ctx, input) {
     const secret = ctx.credentials.secretKey;
     const sig = input.headers.get("x-paystack-signature");
@@ -173,6 +245,9 @@ export const paystackAdapter: ProviderAdapter = {
     if (type === "charge.success") return [{ ...ev, type: "payment", status: "successful" }];
     if (type === "charge.failed") return [{ ...ev, type: "payment", status: "declined", failure: failure("issuer_decline", "declined", str(d, "gateway_response") ?? "Declined") }];
     if (type === "refund.processed") return [{ ...ev, type: "refund", status: "refunded", providerReference: str(d, "transaction_reference") ?? ref }];
+    if (type === "transfer.success" || type === "transfer.failed" || type === "transfer.reversed") {
+      return [{ ...ev, reference: ref, providerReference: str(d, "transfer_code") ?? ref, type: "payout", status: type === "transfer.success" ? "payout_successful" : type === "transfer.failed" ? "payout_failed" : "payout_reversed" }];
+    }
     if (type.startsWith("charge.dispute.")) {
       return [{ ...ev, type: "dispute", status: type.endsWith("create") ? "dispute_opened" : type.endsWith("resolve") ? (str(d, "resolution") === "merchant-accepted" ? "dispute_lost" : "dispute_won") : undefined }];
     }

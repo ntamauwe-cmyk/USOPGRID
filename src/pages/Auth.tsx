@@ -203,10 +203,10 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                     <InputOTP
                       value={otp}
                       onChange={setOtp}
-                      maxLength={6}
+                      maxLength={OTP_LENGTH}
                       disabled={isLoading}
                       onKeyDown={(e) => {
-                        if (e.key === "Enter" && otp.length === 6 && !isLoading) {
+                        if (e.key === "Enter" && otp.length === OTP_LENGTH && !isLoading) {
                           // Find the closest form and submit it
                           const form = (e.target as HTMLElement).closest("form");
                           if (form) {
@@ -216,7 +216,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                       }}
                     >
                       <InputOTPGroup>
-                        {Array.from({ length: 6 }).map((_, index) => (
+                        {Array.from({ length: OTP_LENGTH }).map((_, index) => (
                           <InputOTPSlot key={index} index={index} />
                         ))}
                       </InputOTPGroup>
@@ -242,7 +242,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                   <Button
                     type="submit"
                     className="w-full"
-                    disabled={isLoading || otp.length !== 6}
+                    disabled={isLoading || otp.length !== OTP_LENGTH}
                   >
                     {isLoading ? (
                       <>
@@ -271,15 +271,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
           )}
 
           <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
-            Secured by{" "}
-            <a
-              href="https://freebuff.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline hover:text-primary transition-colors"
-            >
-              freebuff.com
-            </a>
+            One-time codes expire after 15 minutes. USOPGRID staff will never ask you for one.
           </div>
         </Card>
         </div>
@@ -287,6 +279,9 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
     </div>
   );
 }
+
+/** Must match the length generated in src/convex/auth/emailOtp.ts. */
+const OTP_LENGTH = 8;
 
 export default function AuthPage(props: AuthProps) {
   return (

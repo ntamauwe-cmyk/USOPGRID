@@ -12,7 +12,7 @@
 // - Connection status is verified live before every repository listing.
 
 import { v } from "convex/values";
-import { internalAction, internalMutation, internalQuery, action, query, mutation } from "./_generated/server";
+import { internalMutation, internalQuery, action, query, mutation } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { requireOrgMember, requireOrgMemberAction } from "./lib/rbac";

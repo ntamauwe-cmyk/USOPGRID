@@ -13,7 +13,6 @@ import { getAuthUserId } from "@convex-dev/auth/server";
 import { requireOrgMember, getOrgForMember, isPlatformAdmin, requireSensitive, requirePermissionFor } from "./lib/rbac";
 import { ROLE_PERMISSIONS, ROLE_LABELS, PERMISSIONS, roleValidator } from "./schema";
 import { isKnownCountry, getCountry } from "../lib/geo";
-import { generateApiKey, hashApiKey } from "./lib/apikeys";
 import { logAudit } from "./lib/audit";
 import { CURRENCIES, isSupportedCurrency } from "../lib/money";
 

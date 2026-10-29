@@ -10,6 +10,7 @@
 // Providers retry on non-2xx, so anything we have durably recorded gets 200.
 
 import { v } from "convex/values";
+import { throttle, ApiError } from "./lib/httpservice";
 import { httpAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -83,7 +84,10 @@ function reportedState(e: ProviderEvent): string | null {
     case "dispute_opened":
     case "dispute_won":
     case "dispute_lost":
-      return null; // handled by refund/dispute flows
+    case "payout_successful":
+    case "payout_failed":
+    case "payout_reversed":
+      return null; // handled by refund/dispute/payout flows
     default:
       return e.status === "unknown" ? null : txStateForCharge(e.status);
   }
@@ -97,6 +101,14 @@ export const receive = httpAction(async (ctx, request) => {
   const rawBody = await request.text();
   if (rawBody.length > MAX_BODY_BYTES) return new Response("payload too large", { status: 413 });
 
+  if (!connectionKey || connectionKey.length > 128) return new Response("unknown connection", { status: 404 });
+  // Flood control before any crypto or lookups; providers retry on 429/503.
+  try {
+    await throttle(ctx, `webhook:${connectionKey}`, 600, 60_000);
+  } catch (err) {
+    const retry = err instanceof ApiError ? String(err.retryAfterSec ?? 5) : "5";
+    return new Response("slow down", { status: err instanceof ApiError && err.code === "rate_limited" ? 429 : 503, headers: { "Retry-After": retry } });
+  }
   const platform = parsePlatformConnectionId(connectionKey);
   const conn = platform ? null : await ctx.runQuery(internal.connections.connectionByKeyInternal, { connectionKey });
   const environment = platform?.environment ?? conn?.environment;
@@ -115,7 +127,15 @@ export const receive = httpAction(async (ctx, request) => {
     verified = false;
   }
   if (!verified) {
-    await ctx.runMutation(internal.providerWebhooks.recordEventInternal, {
+    // Record forged/misconfigured deliveries for operators, but cap how many so
+    // an attacker cannot fill the database with junk.
+    let record = true;
+    try {
+      await throttle(ctx, `webhook_unverified:${connectionKey}`, 20, 60_000);
+    } catch {
+      record = false;
+    }
+    if (record) await ctx.runMutation(internal.providerWebhooks.recordEventInternal, {
       providerId,
       connectionKey,
       eventId: `unverified_${Date.now()}_${Math.floor(Math.random() * 1e9)}`,
@@ -139,6 +159,16 @@ export const receive = httpAction(async (ctx, request) => {
     let outcome = "ignored";
     let txId: Id<"transactions"> | undefined;
     let detail: string | undefined;
+    if (e.type === "payout") {
+      if (!e.reference || !e.status) {
+        outcome = "ignored";
+      } else {
+        // The payout engine re-confirms with the provider before booking anything.
+        outcome = await ctx.runAction(internal.payouts.applyPayoutEventInternal, { railReference: e.reference, reported: e.status, connectionKey });
+      }
+      await ctx.runMutation(internal.providerWebhooks.recordEventInternal, { providerId, connectionKey, eventId: e.eventId, rawType: e.rawType, verified: true, outcome, detail: `payout ${e.reference ?? "-"}` });
+      continue;
+    }
     const txn =
       e.type === "other" ? null : await ctx.runQuery(internal.providerWebhooks.findTransactionInternal, { providerId, providerReference: e.providerReference, reference: e.reference });
     if (txn && conn?.orgId && txn.orgId !== conn.orgId) {

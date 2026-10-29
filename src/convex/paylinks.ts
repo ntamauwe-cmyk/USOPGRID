@@ -4,7 +4,7 @@
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
-import { requireOrgMember, requireOrgMemberAction } from "./lib/rbac";
+import { requireOrgMember, } from "./lib/rbac";
 import { PERMISSIONS } from "./schema";
 import { logAudit } from "./lib/audit";
 import { randomToken } from "./lib/crypto";

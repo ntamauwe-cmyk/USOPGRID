@@ -86,6 +86,40 @@ and tested for every adapter (`src/tests/providers.test.ts`).
 Platform-owned accounts can instead be configured through environment
 variables (`.env.example`); production reads `NAME`, sandbox reads `NAME_SANDBOX`.
 
+## Payouts
+
+| Provider | Flow | Currencies |
+|---|---|---|
+| Paystack | `POST /transferrecipient` → `POST /transfer` (our reference, kobo), status `GET /transfer/verify/:reference`, webhooks `transfer.success/failed/reversed` (HMAC-SHA512) | NGN, GHS, ZAR, KES |
+| Flutterwave | `POST /v3/transfers` (major units, our reference), status `GET /v3/transfers/:id`, webhook `transfer.completed` (`verif-hash`) | NGN, GHS, KES, UGX, TZS, RWF, ZAR, ZMW, XAF, XOF, EGP, ETB, USD, EUR, GBP |
+| Sandbox | Simulated rail; scenarios success, pending, failed, insufficient funds, timeout | all |
+
+Safety rules: fail over to the next payout provider only when nothing was sent
+(recipient rejected, credentials wrong, provider refuses the currency). A
+timeout or 5xx after the transfer request keeps the payout in PROCESSING and is
+resolved by status lookup; it is never re-sent. Webhooks are confirmed by lookup
+before money is booked. Paystack: disable "OTP for transfers" for API use.
+
+## Toward direct rails (independence from aggregators)
+
+Paystack, Flutterwave and the other providers are connected because they hold
+the licences and scheme/bank memberships needed to move money. Routing treats
+them as interchangeable rails, so a direct connection can be added as one more
+adapter and given top priority, with aggregators kept as fallback. What each
+direct rail needs before it can be built and certified:
+
+| Direct rail | Requirements (Nigeria example) |
+|---|---|
+| Bank transfers (NIBSS NIP / NIBSS Instant Payment) | CBN licence (e.g. Switching & Processing or PSSP), NIBSS membership, NIBSS interface specification and certification environment |
+| Card acquiring (ISO 8583 / ISO 20022 to an acquirer or processor) | Sponsor acquiring bank agreement, Visa/Mastercard/Verve membership or sponsorship, processor message specification, scheme certification |
+| Card storage (own vault and tokenisation) | PCI DSS Level 1 assessment, isolated cardholder-data environment, HSM/KMS key management |
+| Mobile money operators | Commercial agreement per operator (M-Pesa Daraja is already direct) |
+
+Message specifications for NIBSS and the card networks are released to members
+under contract, so the final adapters are built against them once access is
+granted; the routing, ledger, recovery and reconciliation layers already support
+them.
+
 ## Sandbox verification status
 
 | Provider | Adapter unit tests | Live sandbox run |
@@ -93,6 +127,7 @@ variables (`.env.example`); production reads `NAME`, sandbox reads `NAME_SANDBOX
 | Sandbox rails | Full lifecycle, failover, timeout recovery | n/a |
 | Stripe | Request shape, success, decline, 5xx/timeout/network ambiguity, 401, webhook signature (valid/tampered/stale) | Requires test keys |
 | Paystack, Checkout.com, Flutterwave, Xendit | Webhook verification | Requires test keys |
+| Paystack, Flutterwave payouts | Request shape and units, pending/success mapping, nothing-sent failover, timeout → unknown, OTP misconfiguration, status lookup, signed transfer webhooks | Requires test keys |
 | All 10 live adapters | 503 → `unknown` | Requires test keys |
 
 Live sandbox runs need each provider's test credentials, which were not

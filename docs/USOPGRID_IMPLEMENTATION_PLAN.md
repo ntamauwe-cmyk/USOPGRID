@@ -31,9 +31,9 @@ API keys and 6-role RBAC. Defects found and fixed in this pass:
 | 4 Provider ecosystem | Partial | 10 live adapters + 2 sandbox rails; adapter tests with mocked HTTP; live sandbox runs need provider test keys |
 | 5 Enterprise functionality | Done | Providers, routing admin, invitations, 7 roles, MFA + step-up, key rotation, org profile/limits, operations console, notifications |
 | 6 Analytics | Done | Analytics dashboard, provider ranking, cost per success, forecasts, anomaly cron, API usage, CSV reports |
-| 7 User experience | Done (website verified visually); dashboard type-checked | Screenshots of website desktop + mobile; dashboard needs a running backend to view |
+| 7 User experience | Done | Website and all dashboard screens rendered and reviewed on desktop and phone (dashboard via `npm run preview:fixtures`, fixtures type-checked against the real backend return types); phone layouts of transaction tables fixed |
 | 8 Optimization | Partial | Indexed queries for every hot path, bounded batch sizes, self-hosted subset fonts (≈210 KB); load testing not run |
-| 9 Testing and deployment prep | Partial | 102 unit tests passing; backend and frontend type-check; CI workflow; full `vite build` blocked by registry access in the build environment |
+| 9 Testing and deployment prep | Done (except deploying) | 116 unit tests; `tsc -b` and backend tsconfig clean with the real packages; ESLint 0 errors; `vite build` succeeds; `npm audit` 0 vulnerabilities; CI workflow. Convex codegen/deploy needs your Convex project |
 
 ## Feature matrix
 
@@ -59,17 +59,16 @@ API keys and 6-role RBAC. Defects found and fixed in this pass:
 | Operations console | Done |
 | Public website (13 pages) + developer portal | Done |
 | Scheduled reports by email | Planned (no email provider configured) |
-| Payout routing across providers | Planned (payouts still use the original adapter path) |
+| Payouts to real rails (Paystack, Flutterwave; sandbox simulation), encrypted beneficiary accounts, ambiguity recovery by lookup, webhook confirmation, 72 h escalation | Partial (code + mocked-HTTP tests; live verification needs provider keys) |
+| Direct rails (own licences: NIBSS NIP, ISO 8583 acquirer link, card vault) | Planned. Needs licences and network specifications; see the provider integrations doc |
 | Dedicated open-banking (A2A) adapter | Planned |
 | Load/performance test suite | Planned |
 
 ## Access and actions needed from the owner
 
-1. **npm registry access** in the build environment (Settings → Capabilities)
-   or run `npm install && npm run build` locally/CI to complete the build check.
-2. **Provider test credentials** for the providers you will launch with, to run
+1. **Provider test credentials** for the providers you will launch with, to run
    live sandbox verification.
-3. **Repository rename** `raevolt` → `usopgrid` (GitHub Settings → General).
+2. **Repository rename** `raevolt` → `usopgrid` (GitHub Settings → General).
    GitHub redirects the old URL automatically.
-4. Production secrets listed in `docs/USOPGRID_DEPLOYMENT.md`.
-5. Legal review of jurisdiction policy, privacy notice, terms and disclosures.
+3. Production secrets listed in `docs/USOPGRID_DEPLOYMENT.md`.
+4. Legal review of jurisdiction policy, privacy notice, terms and disclosures.

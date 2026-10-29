@@ -1,4 +1,3 @@
-import '@vly-ai/integrations';
 import { Toaster } from "@/components/ui/sonner";
 import { RequireAuth } from "@/components/RequireAuth";
 import { VlyToolbar } from "../vly-toolbar-readonly.tsx";
@@ -103,7 +102,7 @@ class RootErrorBoundary extends React.Component<
             <p className="mt-2 text-xs text-muted-foreground break-words">
               {this.state.message}
             </p>
-            {this.state.stack && (
+            {import.meta.env.DEV && this.state.stack && (
               <pre className="mt-3 text-left text-[10px] leading-4 text-muted-foreground/80 max-h-40 overflow-auto rounded border border-border/60 p-2">
                 {this.state.stack}
               </pre>
@@ -117,6 +116,17 @@ class RootErrorBoundary extends React.Component<
 }
 
 const convex = new ConvexReactClient(import.meta.env.VITE_CONVEX_URL as string);
+
+/**
+ * Editor-preview helpers (element picker, route sync with a parent frame) only
+ * run in development or when explicitly enabled. In production builds they are
+ * off: they talk to any parent window ("*"), which a hostile site framing the
+ * dashboard could abuse. Production also sends frame-ancestors 'none'.
+ */
+const EDITOR_PREVIEW = import.meta.env.DEV || import.meta.env.VITE_EDITOR_PREVIEW === "true";
+// The editor platform's runtime (screenshots for project thumbnails) loads a
+// script from a public CDN, so it is only pulled in for editor previews.
+if (EDITOR_PREVIEW) void import("@vly-ai/integrations");
 
 
 
@@ -147,12 +157,14 @@ function RouteSyncer() {
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <RootErrorBoundary>
-      <ToolbarErrorBoundary>
-        <VlyToolbar />
-      </ToolbarErrorBoundary>
+      {EDITOR_PREVIEW && (
+        <ToolbarErrorBoundary>
+          <VlyToolbar />
+        </ToolbarErrorBoundary>
+      )}
       <ConvexAuthProvider client={convex}>
         <BrowserRouter>
-          <RouteSyncer />
+          {EDITOR_PREVIEW && <RouteSyncer />}
           <Suspense fallback={<RouteLoading />}>
             <Routes>
               <Route path="/" element={<Home />} />

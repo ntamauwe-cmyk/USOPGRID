@@ -508,6 +508,10 @@ export const beneficiaries = defineTable({
   bankCode: v.optional(v.string()),
   accountMasked: v.string(), // e.g. "••••4832"
   accountHash: v.string(), // sha256(accountNumber+bankCode) — duplicate detection
+  /** Full account number sealed with AES-256-GCM; opened only inside the payout action. */
+  sealedAccount: v.optional(v.string()),
+  accountType: v.optional(v.union(v.literal("bank_account"), v.literal("mobile_money"))),
+  country: v.optional(v.string()),
   currency: v.string(),
   status: v.union(v.literal("verified"), v.literal("pending_verification"), v.literal("rejected")),
   verifiedAt: v.optional(v.number()),
@@ -539,6 +543,12 @@ export const payouts = defineTable({
   ),
   provider: v.optional(v.string()),
   providerReference: v.optional(v.string()),
+  connectionId: v.optional(v.string()),
+  /** Reference sent to the payout rail (idempotency key at the provider). */
+  railReference: v.optional(v.string()),
+  outcomeUnknown: v.optional(v.boolean()),
+  recoveryChecks: v.optional(v.number()),
+  escalatedAt: v.optional(v.number()),
   failureCategory: v.optional(v.string()),
   failureCode: v.optional(v.string()),
   failureMessage: v.optional(v.string()),
@@ -551,7 +561,9 @@ export const payouts = defineTable({
   .index("by_payout_id", ["payoutId"])
   .index("by_org_reference", ["orgId", "reference"])
   .index("by_org_created", ["orgId", "createdAt"])
-  .index("by_org_status_created", ["orgId", "status", "createdAt"]);
+  .index("by_org_status_created", ["orgId", "status", "createdAt"])
+  .index("by_status_updated", ["status", "updatedAt"])
+  .index("by_rail_reference", ["railReference"]);
 
 // ---------------------------------------------------------------------------
 // Disputes — chargeback lifecycle per transaction.
@@ -877,6 +889,15 @@ export const orgInvitations = defineTable({
   .index("by_org", ["orgId"]);
 
 // Enterprise sales enquiries from the public website.
+// Fixed-window counters for unauthenticated endpoints (checkout, webhooks).
+export const rateBuckets = defineTable({
+  bucket: v.string(),
+  count: v.number(),
+  windowEnd: v.number(),
+})
+  .index("by_bucket", ["bucket"])
+  .index("by_window_end", ["windowEnd"]);
+
 export const contactRequests = defineTable({
   name: v.string(),
   email: v.string(),
@@ -978,6 +999,7 @@ const schema = defineSchema(
     notifications,
     orgInvitations,
     contactRequests,
+    rateBuckets,
   },
   {
     schemaValidation: false,

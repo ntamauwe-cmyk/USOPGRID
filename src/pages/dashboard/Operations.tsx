@@ -1,28 +1,35 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
+import type { FunctionReturnType } from "convex/server";
 import { api } from "@/convex/_generated/api";
 import type { Id } from "@/convex/_generated/dataModel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { PageHeader, StatusPill, StatCard, LoadingRows, errorMessage, pct } from "@/components/kit";
+import { PageHeader, StatusPill, StatCard, LoadingRows, errorMessage, isStepUpError, pct } from "@/components/kit";
+import { useSensitive } from "@/components/StepUp";
 import { formatMoney } from "@/lib/money";
 import { toast } from "sonner";
 import { CheckCircle2, XCircle } from "lucide-react";
 
-async function act(fn: () => Promise<unknown>, ok: string) {
-  try {
-    await fn();
-    toast.success(ok);
-  } catch (err) {
-    toast.error(errorMessage(err));
-  }
+/** Operator writes always require a fresh authenticator code (step-up). */
+function useAct() {
+  const sensitive = useSensitive();
+  return async (fn: () => Promise<unknown>, ok: string) => {
+    try {
+      await sensitive(fn);
+      toast.success(ok);
+    } catch (err) {
+      if (!isStepUpError(err)) toast.error(errorMessage(err));
+    }
+  };
 }
 
 function Health() {
   const h = useQuery(api.ops.systemHealth, {});
   const reset = useMutation(api.ops.resetCircuit);
+  const act = useAct();
   if (h === undefined) return <LoadingRows rows={6} />;
   return (
     <div className="space-y-6">
@@ -78,11 +85,11 @@ function Health() {
   );
 }
 
-function Recovery() {
-  const q = useQuery(api.ops.recoveryQueue, {});
-  const expedite = useMutation(api.ops.expediteRecovery);
-  if (q === undefined) return <LoadingRows />;
-  const Rows = ({ rows, canExpedite }: { rows: typeof q.open; canExpedite: boolean }) =>
+type RecoveryRow = NonNullable<FunctionReturnType<typeof api.ops.recoveryQueue>>["open"][number];
+
+function RecoveryRows({ rows, canExpedite, onExpedite }: { rows: RecoveryRow[]; canExpedite: boolean; onExpedite: (id: Id<"recoveryJobs">) => void }) {
+  return (
+
     rows.length === 0 ? <p className="p-4 text-sm text-muted-foreground">Empty.</p> : (
       <table className="w-full text-sm">
         <thead className="border-b bg-muted/40 text-left text-xs text-muted-foreground"><tr><th className="px-4 py-2 font-medium">Payment</th><th className="px-4 py-2 font-medium">Kind</th><th className="px-4 py-2 font-medium">Provider</th><th className="px-4 py-2 font-medium">Checks</th><th className="px-4 py-2 font-medium">Next / deadline</th><th className="px-4 py-2 font-medium">Last result</th><th /></tr></thead>
@@ -95,16 +102,23 @@ function Recovery() {
               <td className="px-4 py-2 tabular-nums">{j.checksDone}</td>
               <td className="px-4 py-2 text-xs text-muted-foreground">{new Date(j.nextCheckAt).toLocaleString()}<br />{new Date(j.deadlineAt).toLocaleString()}</td>
               <td className="max-w-xs px-4 py-2 text-xs text-muted-foreground">{j.lastResult ?? "—"}</td>
-              <td className="px-4 py-2 text-right">{canExpedite && <Button size="sm" variant="outline" onClick={() => void act(() => expedite({ jobId: j._id as Id<"recoveryJobs"> }), "Check scheduled now")}>Check now</Button>}</td>
+              <td className="px-4 py-2 text-right">{canExpedite && <Button size="sm" variant="outline" onClick={() => onExpedite(j._id as Id<"recoveryJobs">)}>Check now</Button>}</td>
             </tr>
           ))}
         </tbody>
       </table>
-    );
+    ));
+}
+
+function Recovery() {
+  const q = useQuery(api.ops.recoveryQueue, {});
+  const expedite = useMutation(api.ops.expediteRecovery);
+  const act = useAct();
+  if (q === undefined) return <LoadingRows />;
   return (
     <div className="space-y-6">
-      <section><h3 className="mb-2 text-sm font-semibold">Open ({q.open.length})</h3><div className="overflow-x-auto rounded-lg border bg-card"><Rows rows={q.open} canExpedite /></div></section>
-      <section><h3 className="mb-2 text-sm font-semibold">Escalated to finance</h3><div className="overflow-x-auto rounded-lg border bg-card"><Rows rows={q.escalated} canExpedite={false} /></div></section>
+      <section><h3 className="mb-2 text-sm font-semibold">Open ({q.open.length})</h3><div className="overflow-x-auto rounded-lg border bg-card"><RecoveryRows rows={q.open} canExpedite onExpedite={(id) => void act(() => expedite({ jobId: id }), "Check scheduled now")} /></div></section>
+      <section><h3 className="mb-2 text-sm font-semibold">Escalated to finance</h3><div className="overflow-x-auto rounded-lg border bg-card"><RecoveryRows rows={q.escalated} canExpedite={false} onExpedite={() => undefined} /></div></section>
     </div>
   );
 }
@@ -112,6 +126,7 @@ function Recovery() {
 function DeadLetters() {
   const rows = useQuery(api.ops.deadLetters, {});
   const replay = useMutation(api.ops.replayDeadLetter);
+  const act = useAct();
   if (rows === undefined) return <LoadingRows />;
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">No dead-lettered webhooks.</p>;
   return (
@@ -171,6 +186,7 @@ function ProviderEvents() {
 function Orgs() {
   const orgs = useQuery(api.ops.organizations, {});
   const setStatus = useMutation(api.ops.setOrgStatus);
+  const act = useAct();
   const leads = useQuery(api.contact.listLeads, {});
   if (orgs === undefined) return <LoadingRows />;
   return (
@@ -222,6 +238,7 @@ function Orgs() {
 function Flags() {
   const flags = useQuery(api.ops.listFlags, {});
   const setFlag = useMutation(api.ops.setFlag);
+  const act = useAct();
   const [key, setKey] = useState("");
   return (
     <div className="space-y-4">
@@ -264,6 +281,56 @@ function Audit() {
   );
 }
 
+type KeyReport = { activeKeyId: string; byKey: Record<string, number>; resealed: number; failed: number; skipped: number };
+
+function Keys() {
+  const status = useAction(api.keyRotation.status);
+  const reseal = useAction(api.keyRotation.resealAll);
+  const sensitive = useSensitive();
+  const [report, setReport] = useState<KeyReport | null>(null);
+  const [busy, setBusy] = useState(false);
+  const run = async (fn: () => Promise<KeyReport>) => {
+    setBusy(true);
+    try {
+      setReport(await sensitive(fn));
+    } catch (err) {
+      if (!isStepUpError(err)) toast.error(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const stale = report ? Object.entries(report.byKey).filter(([k]) => k !== report.activeKeyId).reduce((n, [, c]) => n + c, 0) : 0;
+  return (
+    <div className="space-y-4 text-sm">
+      <p className="max-w-2xl text-muted-foreground">
+        Provider credentials, authenticator secrets and payout account numbers are encrypted with the active key. To rotate: add a new key to
+        <code className="mx-1 rounded bg-muted px-1">USOPGRID_ENCRYPTION_KEYS</code>, set
+        <code className="mx-1 rounded bg-muted px-1">USOPGRID_ENCRYPTION_KEY_ID</code> to it, re-encrypt here, then remove the old key when nothing is left on it.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" disabled={busy} onClick={() => void run(() => status({}))}>Check key usage</Button>
+        <Button disabled={busy} onClick={() => void run(() => reseal({}))}>Re-encrypt with active key</Button>
+      </div>
+      {report && (
+        <div className="rounded-lg border p-4">
+          <p>
+            Active key: <span className="font-mono">{report.activeKeyId}</span>
+            {report.resealed + report.failed + report.skipped > 0 && <> · re-encrypted {report.resealed}, failed {report.failed}, changed during run {report.skipped}</>}
+          </p>
+          <ul className="mt-2 space-y-1">
+            {Object.entries(report.byKey).map(([k, n]) => (
+              <li key={k} className="font-mono text-xs">{k}: {n} secret{n === 1 ? "" : "s"}{k === report.activeKeyId ? " (active)" : ""}</li>
+            ))}
+          </ul>
+          <p className={`mt-2 text-xs ${stale ? "text-amber-600" : "text-emerald-600"}`}>
+            {stale ? `${stale} secret(s) still on an older key. Keep that key configured until this reaches zero.` : "Everything is on the active key. Older keys can be removed."}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Operations() {
   const who = useQuery(api.ops.whoami, {});
   if (who === undefined) return <LoadingRows />;
@@ -287,6 +354,7 @@ export default function Operations() {
           <TabsTrigger value="orgs">Organizations</TabsTrigger>
           <TabsTrigger value="flags">Feature flags</TabsTrigger>
           <TabsTrigger value="audit">Alerts & audit</TabsTrigger>
+          <TabsTrigger value="keys">Encryption keys</TabsTrigger>
         </TabsList>
         <TabsContent value="health" className="pt-4"><Health /></TabsContent>
         <TabsContent value="recovery" className="pt-4"><Recovery /></TabsContent>
@@ -295,6 +363,7 @@ export default function Operations() {
         <TabsContent value="orgs" className="pt-4"><Orgs /></TabsContent>
         <TabsContent value="flags" className="pt-4"><Flags /></TabsContent>
         <TabsContent value="audit" className="pt-4"><Audit /></TabsContent>
+        <TabsContent value="keys" className="pt-4"><Keys /></TabsContent>
       </Tabs>
     </div>
   );

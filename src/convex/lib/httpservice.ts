@@ -23,6 +23,10 @@ function baseHeaders(requestId?: string): Record<string, string> {
     "Content-Type": "application/json",
     "Cache-Control": "no-store",
     "X-Content-Type-Options": "nosniff",
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "no-referrer",
     "USOPGRID-Version": API_VERSION,
     ...(requestId ? { "X-USOPGRID-Request-Id": requestId, "X-Correlation-Id": requestId } : {}),
     ...CORS_HEADERS,
@@ -149,6 +153,31 @@ export async function checkRateLimit(ctx: ActionCtx, apiKeyId: string): Promise<
   }
 }
 
+/** Best-effort client address (used only as one throttling dimension). */
+export function clientIp(request: Request): string | null {
+  const h = request.headers;
+  const ip = h.get("cf-connecting-ip") ?? h.get("x-real-ip") ?? h.get("x-forwarded-for")?.split(",")[0];
+  const t = ip?.trim();
+  return t && /^[0-9a-fA-F:.]{3,45}$/.test(t) ? t : null;
+}
+
+/**
+ * Throttle an unauthenticated surface. Fails CLOSED: these endpoints are the
+ * ones attackers hit (card testing, webhook floods), so a limiter outage
+ * returns 503 rather than letting unlimited traffic through.
+ */
+export async function throttle(ctx: ActionCtx, bucket: string, limit: number, windowMs: number): Promise<void> {
+  let result: { ok: boolean; retryAfterMs: number };
+  try {
+    result = (await ctx.runMutation(internal.lib.httpserviceInternal.consumeBucketInternal, { bucket, limit, windowMs })) as { ok: boolean; retryAfterMs: number };
+  } catch {
+    throw new ApiError("provider_unavailable", "Temporarily unavailable. Retry shortly.", true, { retryAfterSec: 5 });
+  }
+  if (!result.ok) {
+    throw new ApiError("rate_limited", "Too many requests. Retry shortly.", true, { retryAfterSec: Math.ceil(result.retryAfterMs / 1000) });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // API key authentication
 // ---------------------------------------------------------------------------
@@ -179,6 +208,11 @@ export async function authenticateRequest(
   }
   if (key.mode !== "secret") {
     throw new ApiError("authorization_error", "Publishable keys cannot authenticate server-side requests. Use a secret key.");
+  }
+  // A live secret key sent from a web page is exposed to everyone who loads
+  // that page. Browsers attach Origin to cross-origin requests; servers don't.
+  if (key.environment === "production" && request.headers.get("Origin")) {
+    throw new ApiError("authorization_error", "Live secret keys must only be used from your server, never from a browser. Rotate this key if it was embedded in a web page.");
   }
 
   await checkRateLimit(ctx, key._id);

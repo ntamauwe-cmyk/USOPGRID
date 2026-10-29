@@ -126,3 +126,61 @@ describe("every live adapter classifies a 503 as unknown", () => {
     });
   }
 });
+
+describe("payout rails", () => {
+  const beneficiary = { name: "Ada Obi", accountNumber: "0123456789", bankCode: "058", bankName: "GTBank", country: "NG", type: "bank_account" as const };
+  const preq = { payoutId: "po_1", reference: "USOPGRIDpo1abcdefgh", amountMinor: 500_000, currency: "NGN", beneficiary };
+
+  test("paystack: creates recipient, then transfer with our reference in kobo", async () => {
+    const { ctx, calls } = mockCtx({ secretKey: "sk_test" }, (c) =>
+      c.url.endsWith("/transferrecipient")
+        ? json(201, { status: true, data: { recipient_code: "RCP_1" } })
+        : json(200, { status: true, data: { status: "pending", transfer_code: "TRF_1", reference: preq.reference } }),
+    );
+    const r = await getAdapter("paystack")!.payout!(ctx, preq);
+    expect(r.status).toBe("pending");
+    expect(r.providerReference).toBe("TRF_1");
+    const body = JSON.parse(String(calls[1].init.body));
+    expect(body).toMatchObject({ amount: 500_000, reference: preq.reference, recipient: "RCP_1", source: "balance" });
+  });
+  test("paystack: rejected recipient is safe to fail over (nothing sent)", async () => {
+    const { ctx, calls } = mockCtx({ secretKey: "sk" }, () => json(400, { status: false, message: "Account number invalid" }));
+    const r = await getAdapter("paystack")!.payout!(ctx, preq);
+    expect(r.status).toBe("failed");
+    expect(r.failure?.safeToFailover).toBe(true);
+    expect(calls.length).toBe(1);
+  });
+  test("paystack: transfer timeout is UNKNOWN (never re-sent)", async () => {
+    const { ctx } = mockCtx({ secretKey: "sk" }, (c) => (c.url.endsWith("/transferrecipient") ? json(201, { status: true, data: { recipient_code: "R" } }) : "timeout"));
+    const r = await getAdapter("paystack")!.payout!(ctx, preq);
+    expect(r.status).toBe("unknown");
+    expect(r.failure?.safeToFailover).toBe(false);
+  });
+  test("paystack: OTP-gated transfers surface as configuration error", async () => {
+    const { ctx } = mockCtx({ secretKey: "sk" }, (c) => (c.url.endsWith("/transferrecipient") ? json(201, { status: true, data: { recipient_code: "R" } }) : json(200, { status: true, data: { status: "otp", transfer_code: "T" } })));
+    const r = await getAdapter("paystack")!.payout!(ctx, preq);
+    expect(r.failure?.code).toBe("transfer_otp_required");
+  });
+  test("flutterwave: sends major units and maps NEW to pending", async () => {
+    const { ctx, calls } = mockCtx({ secretKey: "FLWSECK_TEST" }, () => json(200, { status: "success", data: { id: 991, status: "NEW" } }));
+    const r = await getAdapter("flutterwave")!.payout!(ctx, preq);
+    expect(r.status).toBe("pending");
+    expect(r.providerReference).toBe("991");
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({ amount: 5000, account_bank: "058", reference: preq.reference });
+  });
+  test("flutterwave: status lookup maps SUCCESSFUL", async () => {
+    const { ctx } = mockCtx({ secretKey: "s" }, () => json(200, { status: "success", data: { id: 991, status: "SUCCESSFUL" } }));
+    const r = await getAdapter("flutterwave")!.getPayoutStatus!(ctx, { reference: preq.reference, providerReference: "991", currency: "NGN" });
+    expect(r.status).toBe("successful");
+  });
+  test("paystack: transfer webhooks are signed (SHA-512) and parsed as payout events", async () => {
+    const { ctx } = mockCtx({ secretKey: "sk_live_x" }, () => json(200, {}));
+    const rawBody = JSON.stringify({ event: "transfer.success", data: { id: 5, reference: preq.reference, transfer_code: "TRF_1", amount: 500000, currency: "NGN" } });
+    const headers = new Headers({ "x-paystack-signature": await hmacHex("SHA-512", "sk_live_x", rawBody) });
+    const a = getAdapter("paystack")!;
+    expect(await a.verifyWebhook(ctx, { headers, rawBody, url: "https://x" })).toBe(true);
+    expect(await a.verifyWebhook(ctx, { headers: new Headers({ "x-paystack-signature": "00" }), rawBody, url: "https://x" })).toBe(false);
+    const [e] = a.parseWebhook(ctx, { headers, rawBody, url: "https://x" });
+    expect(e).toMatchObject({ type: "payout", status: "payout_successful", reference: preq.reference });
+  });
+});

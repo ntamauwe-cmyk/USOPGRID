@@ -22,12 +22,20 @@ export default {
       domain: process.env.CONVEX_SITE_URL!,
       applicationID: "convex",
     },
-    {
-      type: "customJwt",
-      issuer: freebuffIssuer,
-      jwks: `${freebuffIssuer}/api/web/.well-known/jwks.json`,
-      applicationID: "vly-convex",
-      algorithm: "RS256",
-    },
+    // Federated tokens from the template's hosting platform are trusted ONLY
+    // when explicitly enabled. Trusting an outside issuer means that issuer
+    // (or anyone who compromises it) can mint sessions for this deployment, so
+    // it stays off for production payment deployments.
+    ...(process.env.USOPGRID_ALLOW_FEDERATED_LOGIN === "true"
+      ? [
+          {
+            type: "customJwt" as const,
+            issuer: freebuffIssuer,
+            jwks: `${freebuffIssuer}/api/web/.well-known/jwks.json`,
+            applicationID: "vly-convex",
+            algorithm: "RS256" as const,
+          },
+        ]
+      : []),
   ],
 } satisfies AuthConfig;

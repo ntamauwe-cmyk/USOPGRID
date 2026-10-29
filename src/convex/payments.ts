@@ -25,7 +25,7 @@ import type { ChargeResult, FailureInfo } from "./providers/types";
 import { failure as mkFailure } from "./providers/types";
 import { canTransition, resolveProviderOutcome, IN_FLIGHT_STATES, type TxState } from "./orchestration/states";
 import { route } from "./orchestration/router";
-import { executeChain, txStateForCharge, type AttemptRecord, type ChainStep } from "./orchestration/engine";
+import { executeChain, type AttemptRecord, type ChainStep } from "./orchestration/engine";
 import { evaluateJurisdiction, screenWatchlist, type ComplianceDecision } from "./orchestration/compliance";
 import { nextRecoveryAt, RECOVERY_DEADLINE_MS, REQUIRES_ACTION_TTL_MS } from "./orchestration/retry";
 import { platformConnectionId, resolveConnection, notify, type RoutingContext } from "./connections";

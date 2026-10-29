@@ -7,7 +7,7 @@
 // dashboard. Because that is a shared token rather than a body signature,
 // USOPGRID re-verifies every success by transaction lookup before booking.
 
-import type { ProviderAdapter, ChargeResult } from "./types";
+import type { ProviderAdapter, ChargeResult, PayoutResult } from "./types";
 import { failure } from "./types";
 import { providerFetch, classifyHttpFailure, unknownOutcome, requireCredential, str, get, callbackUrl } from "./http";
 import { timingSafeEqual } from "../lib/crypto";
@@ -44,6 +44,19 @@ function mapTxn(j: unknown): ChargeResult {
   return { status: "unknown", providerReference: ref, providerStatus: s };
 }
 
+// Transfers (payouts): POST /v3/transfers, amounts in major units, status
+// NEW/PENDING → SUCCESSFUL | FAILED, webhook "transfer.completed".
+// Docs: https://developer.flutterwave.com/docs/making-payments/transfers/overview
+function mapTransfer(j: unknown): PayoutResult {
+  const d = get(j, "data");
+  const s = (str(d, "status") ?? "").toUpperCase();
+  const id = str(d, "id");
+  if (s === "SUCCESSFUL") return { status: "successful", providerReference: id, providerStatus: s };
+  if (s === "FAILED") return { status: "failed", providerReference: id, providerStatus: s, failure: failure("temporary_provider_failure", "transfer_failed", str(d, "complete_message") ?? "Transfer failed.") };
+  if (s === "NEW" || s === "PENDING") return { status: "pending", providerReference: id, providerStatus: s };
+  return { status: "unknown", providerReference: id, providerStatus: s };
+}
+
 export const flutterwaveAdapter: ProviderAdapter = {
   descriptor: {
     id: "flutterwave",
@@ -55,7 +68,8 @@ export const flutterwaveAdapter: ProviderAdapter = {
     countries: ["NG", "GH", "KE", "UG", "TZ", "RW", "ZA", "ZM", "CM", "CI", "SN", "BF", "ML", "BJ", "TG", "GA", "CD", "MW", "SL", "EG", "ET", "MA", "MZ", "GB", "US"],
     currencies: ["NGN", "GHS", "KES", "UGX", "TZS", "RWF", "ZAR", "ZMW", "XAF", "XOF", "MWK", "SLE", "EGP", "ETB", "MAD", "MZN", "CDF", "USD", "EUR", "GBP"],
     methods: ["card", "bank_transfer", "mobile_money", "ussd", "account_to_account", "qr", "open_banking"],
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true },
+    payoutCurrencies: ["NGN", "GHS", "KES", "UGX", "TZS", "RWF", "ZAR", "ZMW", "XAF", "XOF", "EGP", "ETB", "USD", "EUR", "GBP"],
     pricing: { pctBps: 140, fixedMinor: 0, fixedCurrency: "NGN", capMinor: 200_000, notes: "Nigeria local cards 1.4%; international 3.8%. Varies by country." },
     credentials: [
       { key: "secretKey", label: "Secret key (FLWSECK…)", secret: true, required: true },
@@ -130,6 +144,46 @@ export const flutterwaveAdapter: ProviderAdapter = {
     return f ? { status: "failed", failure: f } : { status: "unknown", failure: unknownOutcome(o, NAME) };
   },
 
+  async payout(ctx, req) {
+    if (!req.beneficiary.bankCode) {
+      return { status: "failed", failure: failure("invalid_payment_information", "bank_code_required", "A bank (or mobile network) code is required for Flutterwave transfers.", { safeToFailover: true }) };
+    }
+    const o = await providerFetch(ctx, `${API}/transfers`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        account_bank: req.beneficiary.bankCode,
+        account_number: req.beneficiary.accountNumber,
+        amount: Number(minorToDecimalString(req.amountMinor, req.currency)),
+        currency: req.currency,
+        narration: req.narration?.slice(0, 100) ?? `Payout ${req.payoutId}`,
+        reference: req.reference,
+        beneficiary_name: req.beneficiary.name,
+        debit_currency: req.currency,
+        callback_url: callbackUrl(ctx, "flutterwave"),
+      }),
+    });
+    if (o.kind === "response" && o.status === 200 && str(o.json, "status") === "success") return mapTransfer(o.json);
+    if (o.kind === "response" && o.status === 400 && /duplicate|already exists/i.test(str(o.json, "message") ?? "")) {
+      return { status: "unknown", failure: unknownOutcome(o, NAME) };
+    }
+    const f = classifyHttpFailure(o, NAME);
+    if (f) return { status: "failed", failure: { ...f, message: `${f.message} ${o.kind === "response" ? (str(o.json, "message") ?? "") : ""}`.trim() } };
+    return { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
+  async getPayoutStatus(ctx, q) {
+    if (!q.providerReference) {
+      return { status: "unknown", failure: failure("temporary_provider_failure", "no_transfer_id", "Flutterwave transfer id not known yet; waiting for the webhook.", { retryable: true }) };
+    }
+    const o = await providerFetch(ctx, `${API}/transfers/${encodeURIComponent(q.providerReference)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}` },
+    });
+    if (o.kind === "response" && o.status === 200) return mapTransfer(o.json);
+    return { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
   async verifyWebhook(ctx, input) {
     const expected = ctx.credentials.webhookHash;
     const got = input.headers.get("verif-hash");
@@ -166,6 +220,10 @@ export const flutterwaveAdapter: ProviderAdapter = {
           failure: s === "failed" ? failure("issuer_decline", "declined", str(d, "processor_response") ?? "Declined") : undefined,
         },
       ];
+    }
+    if (type === "transfer.completed" || str(evt, "event.type") === "Transfer") {
+      const ts = (s ?? "").toUpperCase();
+      return [{ ...ev, reference: str(d, "reference"), type: "payout", status: ts === "SUCCESSFUL" ? "payout_successful" : ts === "FAILED" ? "payout_failed" : undefined }];
     }
     if (type.startsWith("refund")) return [{ ...ev, type: "refund", status: "refunded" }];
     return [{ ...ev, type: "other" }];

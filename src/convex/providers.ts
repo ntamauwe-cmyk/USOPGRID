@@ -10,7 +10,8 @@ import { METHOD_LABELS } from "./providers/types";
 import { requireOrgMember, requirePermissionFor, requireSensitive, requireOrgMemberAction, requirePermission } from "./lib/rbac";
 import { PERMISSIONS } from "./schema";
 import { logAudit } from "./lib/audit";
-import { randomToken, sealSecret } from "./lib/crypto";
+import { randomToken } from "./lib/crypto";
+import { seal, keyringConfigured } from "./lib/keyring";
 import { platformConnectionId, platformCredentials, resolveConnection } from "./connections";
 
 const envValidator = v.union(v.literal("sandbox"), v.literal("production"));
@@ -197,10 +198,9 @@ export const createConnection = action({
     if (a.environment === "production" && /(_test_|test_|sandbox|sk_test)/i.test(creds.secretKey ?? "")) {
       throw new ConvexError("These look like test credentials. Add them to the sandbox environment instead.");
     }
-    const key = process.env.USOPGRID_ENCRYPTION_KEY;
-    if (!key) throw new ConvexError("Credential storage is not configured (USOPGRID_ENCRYPTION_KEY missing). Contact your administrator.");
+    if (!keyringConfigured()) throw new ConvexError("Credential storage is not configured (encryption key missing). Contact your administrator.");
     const connectionKey = `pc_${randomToken(22)}`;
-    const sealed = await sealSecret(JSON.stringify(creds), key, connectionKey);
+    const sealed = await seal(JSON.stringify(creds), connectionKey);
     const priority = Math.max(-100, Math.min(100, Math.round(a.priority ?? 0)));
     if (a.pricing && (a.pricing.pctBps < 0 || a.pricing.pctBps > 5000 || a.pricing.fixedMinor < 0)) throw new ConvexError("Invalid pricing");
     await ctx.runMutation(internal.providers.insertConnectionInternal, {

@@ -49,7 +49,7 @@ function makeSandbox(id: string, displayName: string, isBackup: boolean): Provid
     countries: "global",
     currencies: "all",
     methods: PAYMENT_METHODS,
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true },
     pricing: isBackup
       ? { pctBps: 250, fixedMinor: 20, fixedCurrency: "USD", notes: "Simulated pricing (backup)" }
       : { pctBps: 200, fixedMinor: 25, fixedCurrency: "USD", notes: "Simulated pricing" },
@@ -107,6 +107,20 @@ function makeSandbox(id: string, displayName: string, isBackup: boolean): Provid
     },
     async refund(_ctx, req) {
       return { status: "successful", providerRefundReference: `${isBackup ? "sbbr" : "sbxr"}_${req.refundId.slice(-8)}` };
+    },
+    async payout(_ctx, req) {
+      // metadata.simulate: success (default) | pending | failed | insufficient_funds | timeout
+      const sim = String(req.metadata?.simulate ?? "success").toLowerCase();
+      const ref = `${isBackup ? "sbbp" : "sbxp"}_${req.reference.slice(-12)}`;
+      if (sim === "pending") return { status: "pending", providerReference: ref, providerStatus: "processing" };
+      if (sim === "timeout") return { status: "unknown", providerReference: `${ref}_late_ok`, failure: failure("timeout", "outcome_unknown", "Payout rail timed out (simulated).", { retryable: true }) };
+      if (sim !== "success") {
+        return { status: "failed", providerReference: ref, failure: failure(sim === "insufficient_funds" ? "insufficient_funds" : "temporary_provider_failure", `sandbox_payout_${sim}`, `Payout failed in sandbox simulation (${sim}).`, { retryable: sim !== "insufficient_funds" }) };
+      }
+      return { status: "successful", providerReference: ref, providerStatus: "paid" };
+    },
+    async getPayoutStatus(_ctx, q) {
+      return { status: "successful", providerReference: q.providerReference ?? q.reference, providerStatus: "paid" };
     },
     async verifyWebhook(ctx, input) {
       // Sandbox events are signed like USOPGRID's own outbound webhooks.

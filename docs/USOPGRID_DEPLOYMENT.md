@@ -16,10 +16,15 @@ npx convex deploy                      # creates/updates the production backend,
 npx convex env set USOPGRID_ENCRYPTION_KEY "$(openssl rand -base64 32)" --prod
 npx convex env set USOPGRID_PLATFORM_ADMINS "ops@yourcompany.com" --prod
 npx convex env set OPENSANCTIONS_API_KEY "…" --prod          # recommended
+npx convex env set RESEND_API_KEY "re_…" --prod               # sign-in emails
+npx convex env set OTP_EMAIL_FROM "USOPGRID <login@mail.yourdomain.com>" --prod
 npx convex env set VLY_APP_NAME "USOPGRID" --prod
 # optional platform-owned provider accounts: see .env.example
 VITE_CONVEX_URL=https://<deployment>.convex.cloud npm run build
-# upload dist/ to your static host
+# upload dist/ to your static host. public/_headers (Netlify, Cloudflare Pages)
+# and vercel.json carry the security headers; on other hosts copy them from
+# deploy/security-headers.json. If the API uses a custom domain other than
+# api.usopgrid.com, add it to connect-src there and run `npm run headers`.
 ```
 
 Development: `npx convex dev` + `npm run dev`.
@@ -33,7 +38,11 @@ Development: `npx convex dev` + `npm run dev`.
 - [ ] At least one live provider connection per target market, **Test** passing, provider webhook URL configured at the provider.
 - [ ] Merchant webhook endpoints verified with signature checking.
 - [ ] Sanctions screening configured; jurisdiction policy reviewed by counsel.
-- [ ] OTP email relay key rotated (see Security doc).
+- [ ] Sign-in email configured (`RESEND_API_KEY` + `OTP_EMAIL_FROM`); old template relay key revoked.
+- [ ] `USOPGRID_ALLOW_FEDERATED_LOGIN` unset; `VITE_EDITOR_PREVIEW` unset for the production build.
+- [ ] Every platform operator has enrolled an authenticator.
+- [ ] Security headers present: `curl -sI https://your-site | grep -i content-security-policy`.
+- [ ] Payout provider (Paystack/Flutterwave) webhook URL set to the connection's URL; Paystack "OTP for transfers" disabled for API transfers.
 - [ ] WAF/CDN in front of public endpoints.
 - [ ] Backups: enable Convex scheduled backups (daily) and test a restore.
 

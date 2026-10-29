@@ -6,9 +6,10 @@
 import { v, ConvexError } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
-import { isPlatformAdmin, requirePlatformAdmin } from "./lib/rbac";
+import { isPlatformAdmin, requirePlatformAdmin, requireOperatorStepUp } from "./lib/rbac";
 import { listDescriptors } from "./providers/index";
 import { CLOSED } from "./orchestration/circuit";
+import { keyringConfigured } from "./lib/keyring";
 
 async function audit(ctx: MutationCtx, actor: string, action: string, resource: string, resourceId?: string, after?: unknown) {
   await ctx.db.insert("auditLogs", { actor: `operator:${actor}`, action, resource, resourceId, after, at: Date.now() });
@@ -39,7 +40,7 @@ export const systemHealth = query({
     const rejected = (await ctx.db.query("providerEvents").withIndex("by_received", (q) => q.gte("receivedAt", now - 86_400_000)).take(5000)).filter((e) => e.outcome === "rejected").length;
 
     const env = {
-      encryptionKey: Boolean(process.env.USOPGRID_ENCRYPTION_KEY),
+      encryptionKey: keyringConfigured(),
       siteUrl: process.env.CONVEX_SITE_URL ?? null,
       sanctionsScreening: Boolean(process.env.OPENSANCTIONS_API_KEY),
       premiumFx: Boolean(process.env.FX_RATE_PROVIDER_URL && process.env.FX_RATE_PROVIDER_KEY),
@@ -86,7 +87,7 @@ export const systemHealth = query({
 export const resetCircuit = mutation({
   args: { connectionId: v.string() },
   handler: async (ctx, a) => {
-    const op = await requirePlatformAdmin(ctx);
+    const op = await requireOperatorStepUp(ctx);
     const row = await ctx.db.query("circuitStates").withIndex("by_connection", (q) => q.eq("connectionId", a.connectionId)).unique();
     if (!row) return;
     await ctx.db.patch(row._id, { ...CLOSED, openedAt: undefined, nextProbeAt: undefined, cooldownMs: undefined, lastFailureReason: undefined, updatedAt: Date.now() });
@@ -111,7 +112,7 @@ export const recoveryQueue = query({
 export const expediteRecovery = mutation({
   args: { jobId: v.id("recoveryJobs") },
   handler: async (ctx, a) => {
-    const op = await requirePlatformAdmin(ctx);
+    const op = await requireOperatorStepUp(ctx);
     const j = await ctx.db.get(a.jobId);
     if (!j || j.status !== "open") throw new ConvexError("Job is not open");
     await ctx.db.patch(a.jobId, { nextCheckAt: Date.now(), updatedAt: Date.now() });
@@ -137,7 +138,7 @@ export const deadLetters = query({
 export const replayDeadLetter = mutation({
   args: { deliveryId: v.id("webhookDeliveries") },
   handler: async (ctx, a) => {
-    const op = await requirePlatformAdmin(ctx);
+    const op = await requireOperatorStepUp(ctx);
     const d = await ctx.db.get(a.deliveryId);
     if (!d || d.status !== "dead") throw new ConvexError("Only dead-lettered deliveries can be replayed here");
     await ctx.db.patch(a.deliveryId, { status: "pending", attempts: 0, nextAttemptAt: Date.now(), lastError: undefined });
@@ -165,7 +166,7 @@ export const listFlags = query({
 export const setFlag = mutation({
   args: { key: v.string(), enabled: v.boolean(), description: v.optional(v.string()) },
   handler: async (ctx, a) => {
-    const op = await requirePlatformAdmin(ctx);
+    const op = await requireOperatorStepUp(ctx);
     if (!/^[a-z0-9_.-]{2,64}$/.test(a.key)) throw new ConvexError("Flag keys are lowercase letters, digits, . _ -");
     const row = await ctx.db.query("featureFlags").withIndex("by_key", (q) => q.eq("key", a.key)).unique();
     if (row) await ctx.db.patch(row._id, { enabled: a.enabled, description: a.description ?? row.description, updatedBy: op.email, updatedAt: Date.now() });
@@ -192,7 +193,7 @@ export const organizations = query({
 export const setOrgStatus = mutation({
   args: { orgId: v.id("organizations"), status: v.union(v.literal("active"), v.literal("restricted"), v.literal("suspended")), reason: v.string() },
   handler: async (ctx, a) => {
-    const op = await requirePlatformAdmin(ctx);
+    const op = await requireOperatorStepUp(ctx);
     if (a.reason.trim().length < 5) throw new ConvexError("A reason is required");
     const org = await ctx.db.get(a.orgId);
     if (!org) throw new ConvexError("Organization not found");

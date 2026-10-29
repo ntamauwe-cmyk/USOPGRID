@@ -1,11 +1,10 @@
 // USOPGRID public checkout — pays a payment link through POST /api/v1/checkout.
 // Public page (no auth): shows only link-safe fields.
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router";
+import { useParams, } from "react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { StatusPill } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
 import { Loader2, CheckCircle2, CircleAlert, ShieldCheck } from "lucide-react";
 import { UsopgridMark } from "@/components/brand";

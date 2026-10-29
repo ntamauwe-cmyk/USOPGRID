@@ -18,7 +18,7 @@ import type { AdapterContext, Environment, ProviderAdapter, FailureInfo } from "
 import { failure } from "./providers/types";
 import { CLOSED, beginProbe, isAvailable, recordOutcome, type CircuitState, type CircuitOutcome } from "./orchestration/circuit";
 import { DEFAULT_STRATEGY, type Candidate, type ProviderStats, type RoutingRule, type RoutingStrategy } from "./orchestration/router";
-import { openSecret } from "./lib/crypto";
+import { open as openSealed, keyringConfigured } from "./lib/keyring";
 
 const envValidator = v.union(v.literal("sandbox"), v.literal("production"));
 
@@ -395,12 +395,11 @@ export async function resolveConnection(
   if (!conn.sealedCredentials) {
     return { error: failure("configuration_error", "no_credentials", `${adapter.descriptor.displayName} connection has no credentials.`, { safeToFailover: true }) };
   }
-  const key = process.env.USOPGRID_ENCRYPTION_KEY;
-  if (!key) {
-    return { error: failure("configuration_error", "encryption_key_missing", "USOPGRID_ENCRYPTION_KEY is not configured.", { safeToFailover: true }) };
+  if (!keyringConfigured()) {
+    return { error: failure("configuration_error", "encryption_key_missing", "The encryption key is not configured.", { safeToFailover: true }) };
   }
   try {
-    const credentials = JSON.parse(await openSecret(conn.sealedCredentials, key, conn.connectionKey)) as Record<string, string>;
+    const credentials = JSON.parse(await openSealed(conn.sealedCredentials, conn.connectionKey)) as Record<string, string>;
     return { adapter, ctx: { ...base, credentials }, orgId: conn.orgId };
   } catch {
     return { error: failure("configuration_error", "credentials_unreadable", "Stored credentials could not be decrypted (key rotated?).", { safeToFailover: true }) };

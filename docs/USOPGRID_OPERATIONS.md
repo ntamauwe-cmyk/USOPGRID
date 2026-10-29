@@ -31,6 +31,17 @@ exception). Money may have moved. Finance checks the provider: either refund
 the customer through the provider dashboard or reinstate, and record the
 resolution note.
 
+**Payout stuck in PROCESSING.** The provider has not confirmed yet. The
+recovery job asks the same provider every few minutes with growing gaps (never
+re-sends money). Provider webhooks are re-confirmed by lookup before anything is
+booked. After 72 h it raises a high-severity reconciliation exception and a
+critical notification: check the transfer in the provider dashboard before
+releasing funds or paying again.
+
+**Key rotation / suspected key exposure.** Operations → Encryption keys. Add a
+new key, switch the active id, re-encrypt, remove the old key (Security doc).
+If a key may be exposed, also rotate every provider credential at the provider.
+
 **Webhook endpoint failing.** Deliveries retry six times over ~9 h then
 dead-letter. After the merchant fixes the endpoint, replay from Dead letters.
 

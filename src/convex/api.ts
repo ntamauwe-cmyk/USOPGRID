@@ -23,6 +23,8 @@ import {
   ApiError,
   API_VERSION,
   type AuthedKey,
+  clientIp,
+  throttle,
 } from "./lib/httpservice";
 import { fingerprint } from "./lib/idempotency";
 import { listDescriptors, getAdapter, PAYMENT_METHODS } from "./providers/index";
@@ -583,6 +585,8 @@ export const getLinkPublic = httpAction(async (ctx, request) => {
   const requestId = requestIdFrom(request);
   try {
     const linkId = new URL(request.url).pathname.split("/").filter(Boolean)[3] ?? "";
+    const ip = clientIp(request);
+    if (ip) await throttle(ctx, `checkout_view:ip:${ip}`, 60, 60_000);
     const resolved = (await ctx.runQuery(internal.apiInternal.linkForCheckoutInternal, { linkId })) as { link: Doc<"paymentLinks">; merchantName: string } | null;
     if (!resolved) throw new ApiError("not_found", "Unknown payment link.");
     const { link } = resolved;
@@ -613,7 +617,11 @@ export const checkoutWithLink = httpAction(async (ctx, request) => {
   const requestId = requestIdFrom(request);
   try {
     const linkId = new URL(request.url).pathname.split("/").filter(Boolean)[3] ?? "";
-    if (!linkId.startsWith("pl_")) throw new ApiError("not_found", "Unknown payment link.");
+    if (!linkId.startsWith("pl_") || linkId.length > 64) throw new ApiError("not_found", "Unknown payment link.");
+    // Card-testing defence: cap attempts per client and per link.
+    const ip = clientIp(request);
+    if (ip) await throttle(ctx, `checkout_pay:ip:${ip}`, 10, 10 * 60_000);
+    await throttle(ctx, `checkout_pay:link:${linkId}`, 60, 10 * 60_000);
     const resolved = (await ctx.runQuery(internal.apiInternal.linkForCheckoutInternal, { linkId })) as { link: Doc<"paymentLinks">; merchantName: string } | null;
     if (!resolved) throw new ApiError("not_found", "Unknown payment link.");
     const { link } = resolved;

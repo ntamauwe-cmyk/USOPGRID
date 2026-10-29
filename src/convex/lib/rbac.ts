@@ -144,3 +144,23 @@ export async function requirePlatformAdmin(ctx: AnyCtx): Promise<{ userId: Id<"u
   if (!admin) throw new ConvexError("FORBIDDEN: USOPGRID operations console is restricted to platform operators");
   return admin;
 }
+
+/**
+ * Operator writes: platform admin AND an enrolled authenticator AND a fresh
+ * step-up. There is no policy opt-out: operator accounts can suspend any
+ * organization and re-encrypt every secret.
+ */
+export async function requireOperatorStepUp(ctx: AnyCtx): Promise<{ userId: Id<"users">; email: string }> {
+  const admin = await requirePlatformAdmin(ctx);
+  const mfa = await ctx.db
+    .query("userMfa")
+    .withIndex("by_user", (q) => q.eq("userId", admin.userId))
+    .unique();
+  if (mfa?.status !== "enabled") {
+    throw new ConvexError("MFA_REQUIRED: operator accounts must enable multi-factor authentication (Security page) before making changes.");
+  }
+  if (!mfa.verifiedUntil || mfa.verifiedUntil < Date.now()) {
+    throw new ConvexError("MFA_STEP_UP: confirm with your authenticator code to continue.");
+  }
+  return admin;
+}

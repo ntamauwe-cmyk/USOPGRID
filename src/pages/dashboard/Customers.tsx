@@ -4,7 +4,6 @@ import { useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
   Table,
@@ -16,7 +15,7 @@ import {
 } from "@/components/ui/table";
 import { PageHeader, EmptyState, StatusPill, KeyValue } from "@/components/kit";
 import { formatMoney } from "@/lib/money";
-import { Users, Loader2, Search, ChevronLeft, ArrowLeftRight } from "lucide-react";
+import { Users, Loader2, ChevronLeft, } from "lucide-react";
 import { Link } from "react-router";
 
 export default function Customers() {

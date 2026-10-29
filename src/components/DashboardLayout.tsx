@@ -120,7 +120,10 @@ export default function DashboardLayout() {
   const orgContext = useQuery(api.orgs.getOrgContext, {});
   const unread = useQuery(api.notifications.unreadCount, orgContext ? {} : "skip");
   const bootstrap = useMutation(api.orgs.bootstrapOrg);
-  const [mobileOpen, setMobileOpen] = useState(false);
+  // The mobile menu is open only on the page it was opened from, so navigating closes it.
+  const [openedOn, setOpenedOn] = useState<string | null>(null);
+  const mobileOpen = openedOn === location.pathname;
+  const setMobileOpen = (open: boolean) => setOpenedOn(open ? location.pathname : null);
   const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -129,7 +132,6 @@ export default function DashboardLayout() {
     }
   }, [isLoading, user, orgContext, bootstrap]);
 
-  useEffect(() => setMobileOpen(false), [location.pathname]);
 
   if (bootError) {
     return (
