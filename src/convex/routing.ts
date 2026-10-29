@@ -11,6 +11,7 @@ import { PERMISSIONS } from "./schema";
 import { logAudit } from "./lib/audit";
 import { getAdapter, PAYMENT_METHODS } from "./providers/index";
 import { route, DEFAULT_STRATEGY, type RoutingRule } from "./orchestration/router";
+import { backtest as runBacktest, historyFromAttempts, scorecards as buildScorecards, SCORECARD_METHOD, MIN_SAMPLE } from "./lib/backtest";
 import { isKnownCountry } from "../lib/geo";
 import { isSupportedCurrency } from "../lib/money";
 import { loadRoutingContext, type RoutingContext } from "./connections";
@@ -176,5 +177,110 @@ export const recentDecisions = query({
       });
     }
     return out;
+  },
+});
+
+const WINDOWS = [7, 30, 90] as const;
+const MAX_ROWS = 5000;
+
+async function attemptsInWindow(ctx: QueryCtx, orgId: Id<"organizations">, environment: "sandbox" | "production", days: number) {
+  const since = Date.now() - days * 86_400_000;
+  const rows = await ctx.db
+    .query("paymentAttempts")
+    .withIndex("by_org_started", (q) => q.eq("orgId", orgId).gte("startedAt", since))
+    .order("desc")
+    .take(MAX_ROWS + 1);
+  const truncated = rows.length > MAX_ROWS;
+  return { rows: rows.slice(0, MAX_ROWS).filter((r) => r.environment === environment), since, truncated };
+}
+
+function windowDays(d: number | undefined) {
+  return (WINDOWS as readonly number[]).includes(d ?? 30) ? (d ?? 30) : 30;
+}
+
+/**
+ * Provider scorecards for a period. Every figure carries its sample size,
+ * method and limitations; small samples are flagged, not hidden.
+ */
+export const scorecards = query({
+  args: { days: v.optional(v.number()) },
+  handler: async (ctx, a) => {
+    const oc = await requirePermissionFor(ctx, PERMISSIONS.ANALYTICS_VIEW);
+    const env = (oc.org.environment ?? "sandbox") as "sandbox" | "production";
+    const days = windowDays(a.days);
+    const rc = await contextFor(ctx, oc.orgId, env);
+    const { rows, since, truncated } = await attemptsInWindow(ctx, oc.orgId, env, days);
+    const pricing = new Map(rc.candidates.map((c) => [c.connectionId, c.pricing ?? getAdapter(c.providerId)?.descriptor.pricing]));
+    const cards = buildScorecards(rows, (id) => pricing.get(id) ?? undefined).map((c) => ({ ...c, displayName: getAdapter(c.providerId)?.descriptor.displayName ?? c.providerId }));
+    return {
+      environment: env,
+      days,
+      from: since,
+      to: Date.now(),
+      method: SCORECARD_METHOD,
+      minSample: MIN_SAMPLE,
+      truncated,
+      dataSource: env === "sandbox" ? "Sandbox attempts against simulated rails. These scores describe the simulator, not real provider performance." : "Production attempts recorded by USOPGRID.",
+      cards,
+    };
+  },
+});
+
+/**
+ * Replay recent first attempts under a proposed policy and compare it with
+ * the live one. Read-only: nothing is saved and no money moves.
+ */
+export const backtest = query({
+  args: {
+    days: v.optional(v.number()),
+    disabledRuleIds: v.optional(v.array(v.string())),
+    extraRule: v.optional(v.object({ match: matchValidator, action: actionValidator })),
+    weights: v.optional(v.object({ success: v.number(), cost: v.number(), latency: v.number() })),
+  },
+  handler: async (ctx, a) => {
+    const oc = await requirePermissionFor(ctx, PERMISSIONS.ANALYTICS_VIEW);
+    const env = (oc.org.environment ?? "sandbox") as "sandbox" | "production";
+    const days = windowDays(a.days);
+    const rc = await contextFor(ctx, oc.orgId, env);
+    const candidates = rc.candidates.flatMap((c) => {
+      const ad = getAdapter(c.providerId);
+      return ad ? [{ ...c, descriptor: ad.descriptor }] : [];
+    });
+    let proposedRules = rc.rules.filter((r) => !(a.disabledRuleIds ?? []).includes(r.id));
+    if (a.extraRule) {
+      const match = { ...a.extraRule.match, countries: a.extraRule.match.countries?.map((c) => c.toUpperCase()), currencies: a.extraRule.match.currencies?.map((c) => c.toUpperCase()) };
+      validateRule(match, a.extraRule.action);
+      proposedRules = [{ id: "proposed", name: "Proposed rule", enabled: true, order: -1, match, action: a.extraRule.action }, ...proposedRules];
+    }
+    let strategy = rc.strategy;
+    if (a.weights) {
+      const w = a.weights;
+      const total = w.success + w.cost + w.latency;
+      if ([w.success, w.cost, w.latency].some((x) => !Number.isFinite(x) || x < 0) || total <= 0) throw new ConvexError("Weights must be non-negative and not all zero");
+      strategy = { ...rc.strategy, weights: { success: w.success / total, cost: w.cost / total, latency: w.latency / total } };
+    }
+    const { rows, since, truncated } = await attemptsInWindow(ctx, oc.orgId, env, days);
+    const history = historyFromAttempts(rows.map((r) => ({ ...r, transactionId: r.transactionId as string })));
+    const result = runBacktest(history, candidates, rc.stats, { rules: rc.rules, strategy: rc.strategy }, { rules: proposedRules, strategy });
+    const names = Object.fromEntries(candidates.map((c) => [c.providerId, c.descriptor.displayName]));
+    return {
+      label: "Simulated" as const,
+      environment: env,
+      days,
+      from: since,
+      to: Date.now(),
+      truncated,
+      payments: history.length,
+      minSample: MIN_SAMPLE,
+      providerNames: names,
+      ...result,
+      method: [
+        "Each payment's first attempt in the period is routed again under the live and the proposed policy, assuming every provider was available.",
+        "Where a policy picks the provider that actually handled the payment, the real outcome and latency are used (observed).",
+        `Otherwise the outcome is estimated from that provider's first-attempt success rate for the same method and currency, smoothed toward 85% so small samples cannot dominate; estimates resting on fewer than ${MIN_SAMPLE} attempts are counted as low confidence.`,
+        "Failover, customer behaviour, provider capacity and future price changes are not modelled. Treat this as a guide, not a forecast.",
+      ],
+      dataSource: env === "sandbox" ? "Sandbox history from simulated rails." : "Production history.",
+    };
   },
 });

@@ -34,6 +34,7 @@ import type * as lib_analytics from "../lib/analytics.js";
 import type * as lib_apikeys from "../lib/apikeys.js";
 import type * as lib_approvals from "../lib/approvals.js";
 import type * as lib_audit from "../lib/audit.js";
+import type * as lib_backtest from "../lib/backtest.js";
 import type * as lib_billing from "../lib/billing.js";
 import type * as lib_bulk from "../lib/bulk.js";
 import type * as lib_crypto from "../lib/crypto.js";
@@ -122,6 +123,7 @@ declare const fullApi: ApiFromModules<{
   "lib/apikeys": typeof lib_apikeys;
   "lib/approvals": typeof lib_approvals;
   "lib/audit": typeof lib_audit;
+  "lib/backtest": typeof lib_backtest;
   "lib/billing": typeof lib_billing;
   "lib/bulk": typeof lib_bulk;
   "lib/crypto": typeof lib_crypto;
