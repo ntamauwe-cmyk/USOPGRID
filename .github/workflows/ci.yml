@@ -13,6 +13,20 @@ jobs:
       - run: bun install --frozen-lockfile || bun install
       - run: bun test src/tests/
 
+  generated-code-current:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Convex builds the site before it generates code, so src/convex/_generated
+      # must be committed and current. Regenerate offline and fail on any diff.
+      - run: npx convex codegen --system-udfs --typecheck disable
+      - run: git diff --exit-code src/convex/_generated
+
   typecheck-and-build:
     runs-on: ubuntu-latest
     env:
