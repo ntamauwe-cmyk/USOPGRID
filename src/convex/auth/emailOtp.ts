@@ -22,7 +22,7 @@ export const emailOtp = Email({
         {
           to: email,
           otp: token,
-          appName: process.env.VLY_APP_NAME || "RAEVOLT",
+          appName: process.env.VLY_APP_NAME || "USOPGRID",
         },
         {
           headers: {

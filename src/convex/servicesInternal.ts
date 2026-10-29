@@ -80,3 +80,15 @@ export const auditInternal = internalMutation({
     });
   },
 });
+
+export const apiKeyByIdInternal = internalQuery({
+  args: { keyId: v.id("apiKeys") },
+  handler: async (ctx, { keyId }) => ctx.db.get(keyId),
+});
+
+export const expireApiKeyInternal = internalMutation({
+  args: { keyId: v.id("apiKeys"), expiresAt: v.number(), rotatedToKeyId: v.string() },
+  handler: async (ctx, a) => {
+    await ctx.db.patch(a.keyId, { expiresAt: a.expiresAt, rotatedToKeyId: a.rotatedToKeyId });
+  },
+});

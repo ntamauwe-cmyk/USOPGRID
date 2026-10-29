@@ -1,0 +1,173 @@
+// Flutterwave adapter — v3 Standard (hosted) payments.
+// Docs: https://developer.flutterwave.com/docs/collecting-payments/standard ,
+//       https://developer.flutterwave.com/docs/integration-guides/webhooks
+// Auth: Bearer secret key (test vs live keys). AMOUNTS ARE MAJOR UNITS — we
+// convert exactly via decimal strings, never floats.
+// Webhooks: `verif-hash` header must equal the secret hash set in the
+// dashboard. Because that is a shared token rather than a body signature,
+// USOPGRID re-verifies every success by transaction lookup before booking.
+
+import type { ProviderAdapter, ChargeResult } from "./types";
+import { failure } from "./types";
+import { providerFetch, classifyHttpFailure, unknownOutcome, requireCredential, str, get, callbackUrl } from "./http";
+import { timingSafeEqual } from "../lib/crypto";
+import { minorToDecimalString, decimalToMinor } from "../../lib/money";
+
+const API = "https://api.flutterwave.com/v3";
+const NAME = "Flutterwave";
+
+const OPTIONS: Record<string, string> = {
+  card: "card",
+  bank_transfer: "banktransfer",
+  mobile_money: "mobilemoneyghana,mobilemoneyuganda,mobilemoneyrwanda,mobilemoneyzambia,mobilemoneyfranco,mpesa",
+  ussd: "ussd",
+  account_to_account: "account",
+  qr: "nqr",
+  open_banking: "account",
+};
+
+function mapTxn(j: unknown): ChargeResult {
+  const d = get(j, "data");
+  const s = str(d, "status");
+  const ref = str(d, "id");
+  const msg = str(d, "processor_response") ?? "Declined";
+  if (s === "successful") return { status: "successful", providerReference: ref, providerStatus: s };
+  if (s === "failed") {
+    return {
+      status: "declined",
+      providerReference: ref,
+      providerStatus: s,
+      failure: /insufficient/i.test(msg) ? failure("insufficient_funds", "insufficient_funds", msg) : failure("issuer_decline", "declined", msg),
+    };
+  }
+  if (s === "pending") return { status: "pending", providerReference: ref, providerStatus: s };
+  return { status: "unknown", providerReference: ref, providerStatus: s };
+}
+
+export const flutterwaveAdapter: ProviderAdapter = {
+  descriptor: {
+    id: "flutterwave",
+    displayName: "Flutterwave",
+    category: "regional_psp",
+    description: "Pan-African collections across 30+ countries: cards, mobile money, bank transfer, USSD.",
+    website: "https://flutterwave.com",
+    docsUrl: "https://developer.flutterwave.com/docs",
+    countries: ["NG", "GH", "KE", "UG", "TZ", "RW", "ZA", "ZM", "CM", "CI", "SN", "BF", "ML", "BJ", "TG", "GA", "CD", "MW", "SL", "EG", "ET", "MA", "MZ", "GB", "US"],
+    currencies: ["NGN", "GHS", "KES", "UGX", "TZS", "RWF", "ZAR", "ZMW", "XAF", "XOF", "MWK", "SLE", "EGP", "ETB", "MAD", "MZN", "CDF", "USD", "EUR", "GBP"],
+    methods: ["card", "bank_transfer", "mobile_money", "ussd", "account_to_account", "qr", "open_banking"],
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true },
+    pricing: { pctBps: 140, fixedMinor: 0, fixedCurrency: "NGN", capMinor: 200_000, notes: "Nigeria local cards 1.4%; international 3.8%. Varies by country." },
+    credentials: [
+      { key: "secretKey", label: "Secret key (FLWSECK…)", secret: true, required: true },
+      { key: "webhookHash", label: "Webhook secret hash", secret: true, required: true },
+    ],
+    envCredentials: { secretKey: "FLW_SECRET_KEY", webhookHash: "FLW_WEBHOOK_HASH" },
+  },
+
+  async charge(ctx, req) {
+    if (!req.customer?.email) {
+      return { status: "failed", failure: failure("invalid_payment_information", "email_required", "Flutterwave requires a customer email.", { safeToFailover: true }) };
+    }
+    const o = await providerFetch(ctx, `${API}/payments`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tx_ref: req.transactionId,
+        amount: minorToDecimalString(req.amountMinor, req.currency),
+        currency: req.currency,
+        redirect_url: req.returnUrl ?? callbackUrl(ctx, "flutterwave"),
+        payment_options: OPTIONS[req.paymentMethod],
+        customer: { email: req.customer.email, name: req.customer.name, phonenumber: req.customer.phone },
+        meta: { usopgrid_transaction_id: req.transactionId, usopgrid_reference: req.reference },
+        customizations: { title: req.description ?? "Payment" },
+      }),
+    });
+    if (o.kind === "response" && o.status === 200 && str(o.json, "status") === "success") {
+      return { status: "requires_action", providerReference: req.transactionId, providerStatus: "link_created", nextAction: { type: "redirect", url: str(o.json, "data.link") } };
+    }
+    const f = classifyHttpFailure(o, NAME);
+    return f ? { status: "failed", failure: f } : { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
+  async getStatus(ctx, q) {
+    const o = await providerFetch(ctx, `${API}/transactions/verify_by_reference?tx_ref=${encodeURIComponent(q.transactionId)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}` },
+    });
+    if (o.kind === "response" && o.status === 200) {
+      const r = mapTxn(o.json);
+      const cur = str(o.json, "data.currency");
+      const amt = get(o.json, "data.amount");
+      if (cur && amt !== undefined) {
+        // Surface the provider-reported amount so the engine can detect mismatches.
+        try {
+          r.reportedAmountMinor = decimalToMinor(amt as number, cur);
+          r.reportedCurrency = cur;
+        } catch {
+          r.status = "unknown";
+        }
+      }
+      return r;
+    }
+    if (o.kind === "response" && (o.status === 404 || o.status === 400)) {
+      return { status: "pending", providerReference: q.providerReference, providerStatus: "not_paid_yet" };
+    }
+    return { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
+  async refund(ctx, req) {
+    // Refunds use Flutterwave's numeric transaction id (recorded once the payment completes).
+    const o = await providerFetch(ctx, `${API}/transactions/${encodeURIComponent(req.providerReference ?? "")}/refund`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ amount: minorToDecimalString(req.amountMinor, req.currency) }),
+    });
+    if (o.kind === "response" && o.status === 200 && str(o.json, "status") === "success") {
+      const s = str(o.json, "data.status");
+      return { status: s === "completed" ? "successful" : "pending", providerRefundReference: str(o.json, "data.id") };
+    }
+    const f = classifyHttpFailure(o, NAME);
+    return f ? { status: "failed", failure: f } : { status: "unknown", failure: unknownOutcome(o, NAME) };
+  },
+
+  async verifyWebhook(ctx, input) {
+    const expected = ctx.credentials.webhookHash;
+    const got = input.headers.get("verif-hash");
+    return !!expected && !!got && timingSafeEqual(expected, got);
+  },
+
+  parseWebhook(_ctx, input) {
+    const evt = JSON.parse(input.rawBody);
+    const type = str(evt, "event") ?? str(evt, "event.type") ?? "";
+    const d = get(evt, "data") ?? evt;
+    const cur = str(d, "currency");
+    const amt = get(d, "amount");
+    let amountMinor: number | undefined;
+    try {
+      amountMinor = cur && amt !== undefined ? decimalToMinor(amt as number, cur) : undefined;
+    } catch {
+      amountMinor = undefined;
+    }
+    const s = str(d, "status");
+    const ev = {
+      eventId: `${type}:${str(d, "id")}:${s}`,
+      rawType: type,
+      providerReference: str(d, "id"),
+      reference: str(d, "tx_ref") ?? str(d, "txRef"),
+      amountMinor,
+      currency: cur,
+    };
+    if (type === "charge.completed") {
+      return [
+        {
+          ...ev,
+          type: "payment",
+          status: s === "successful" ? "successful" : s === "failed" ? "declined" : "pending",
+          failure: s === "failed" ? failure("issuer_decline", "declined", str(d, "processor_response") ?? "Declined") : undefined,
+        },
+      ];
+    }
+    if (type.startsWith("refund")) return [{ ...ev, type: "refund", status: "refunded" }];
+    return [{ ...ev, type: "other" }];
+  },
+};

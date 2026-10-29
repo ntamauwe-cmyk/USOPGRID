@@ -1,4 +1,4 @@
-// RAEVOLT disputes engine (prompt §16). Lifecycle:
+// USOPGRID disputes engine. Lifecycle:
 //   OPEN → AWAITING_EVIDENCE → UNDER_REVIEW → WON | LOST | CANCELLED
 // Ledger impact only on terminal outcomes:
 //   LOST:  chargeback — money leaves merchant_balance back to the rail
@@ -315,7 +315,7 @@ async function resolveDispute(
               currency: d.currency,
               kind: ACCOUNT_KINDS.PLATFORM_FEES,
               code: `platform_fees_${d.currency}`,
-              name: `RAEVOLT fees ${d.currency}`,
+              name: `USOPGRID fees ${d.currency}`,
             },
             direction: "credit",
             amountMinor: DISPUTE_FEE_MINOR,
@@ -353,7 +353,7 @@ async function resolveDispute(
 
 // Internal mutations used by provider webhook flows (provider-initiated
 // chargebacks/updates). Kept internal so external systems can never touch
-// disputes without going through RAEVOLT's engine + tenant checks.
+// disputes without going through USOPGRID's engine + tenant checks.
 export const openDisputeInternal = internalMutation({
   args: {
     orgId: v.id("organizations"),

@@ -1,12 +1,12 @@
-// GitHub integration (RAEVOLT developer platform).
+// GitHub integration (USOPGRID developer platform).
 //
-// RAEVOLT is standalone infrastructure; this module connects it to GitHub for
+// USOPGRID is standalone infrastructure; this module connects it to GitHub for
 // repository visibility and source-context for the developer portal. It does
 // NOT touch any other project and shares no state with other RAE products.
 //
-// Security model (prompt §40):
+// Security model:
 // - The PAT is validated against GitHub's /user endpoint, stored ONLY as a
-//   SHA-256 hash (same policy as RAEVOLT API keys), never returned to the
+//   SHA-256 hash (same policy as USOPGRID API keys), never returned to the
 //   client, never logged. A 4-char hint is kept for UI identification.
 // - Connecting requires the org:manage permission (owner/admin only).
 // - Connection status is verified live before every repository listing.
@@ -22,7 +22,7 @@ import { sha256Hex } from "./lib/crypto";
 import { ConvexError } from "convex/values";
 
 const GITHUB_API = "https://api.github.com";
-const USER_AGENT = "RAEVOLT-Platform";
+const USER_AGENT = "USOPGRID-Platform";
 
 interface GithubUser {
   login: string;

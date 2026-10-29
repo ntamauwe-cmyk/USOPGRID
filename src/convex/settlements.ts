@@ -1,4 +1,4 @@
-// RAEVOLT settlement + reconciliation engines (prompt §18, §19).
+// USOPGRID settlement + reconciliation engines.
 //
 // PAYMENT SUCCESS ≠ SETTLEMENT CONFIRMED. Money becomes payable when a
 // settlement batch moves it from merchant_balance to settlement_payable; the
@@ -184,7 +184,7 @@ export const settleBatchInternal = internalMutation({
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation engine (prompt §19): ledger settlements vs bank records.
+// Reconciliation engine: ledger settlements vs bank records.
 // Detects: missing bank credit, amount mismatch, unexplained bank entries.
 // ---------------------------------------------------------------------------
 export const reconcileInternal = internalMutation({

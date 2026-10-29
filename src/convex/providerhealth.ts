@@ -1,4 +1,4 @@
-// RAEVOLT provider health (prompt §36) — per provider/environment/day charge
+// USOPGRID provider health — per provider/environment/day charge
 // aggregates. Feeds the dashboard and, later, the routing engine's health
 // signals. Record path is fire-and-forget from the payment engine.
 import { v } from "convex/values";

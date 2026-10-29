@@ -1,190 +1,59 @@
-// RAEVOLT provider abstraction (prompt §12, §50) + routing engine (prompt §13).
+// USOPGRID provider registry.
 //
-// RAEVOLT owns orchestration; providers are replaceable rail adapters. Adding a
-// real provider (Paystack, Flutterwave, a bank rail, or the future RAEVOLT
-// Switch) means implementing PaymentProviderAdapter and registering it — the
-// payment engine never changes.
-//
-// The sandbox adapter is a clearly separated simulation (prompt §3, §32). It is
-// ONLY reachable with sandbox keys and NEVER pretends to be live processing.
+// To add a processor: implement ProviderAdapter in its own file and append it
+// here. The router, engine, API, webhooks, recovery jobs and UI all discover
+// it from this list — nothing else changes.
 
-export type FailureCategory =
-  | "timeout"
-  | "temporary_provider_failure"
-  | "network_error"
-  | "issuer_decline"
-  | "insufficient_funds"
-  | "invalid_payment_information"
-  | "fraud_rejection"
-  | "provider_outage"
-  | "customer_cancellation";
+import type { ProviderAdapter, ProviderDescriptor } from "./types";
+import { sandboxAdapter, sandboxBackupAdapter } from "./sandbox";
+import { stripeAdapter } from "./stripe";
+import { adyenAdapter } from "./adyen";
+import { checkoutComAdapter } from "./checkoutcom";
+import { paystackAdapter } from "./paystack";
+import { flutterwaveAdapter } from "./flutterwave";
+import { mpesaAdapter } from "./mpesa";
+import { razorpayAdapter } from "./razorpay";
+import { mercadoPagoAdapter } from "./mercadopago";
+import { xenditAdapter } from "./xendit";
+import { dlocalAdapter } from "./dlocal";
 
-export interface FailureInfo {
-  category: FailureCategory;
-  code: string;
-  message: string;
-  retryable: boolean;
+export * from "./types";
+export { SANDBOX_SIMULATION_KEYS } from "./sandbox";
+
+export const ADAPTERS: readonly ProviderAdapter[] = [
+  sandboxAdapter,
+  sandboxBackupAdapter,
+  stripeAdapter,
+  adyenAdapter,
+  checkoutComAdapter,
+  dlocalAdapter,
+  paystackAdapter,
+  flutterwaveAdapter,
+  mpesaAdapter,
+  razorpayAdapter,
+  mercadoPagoAdapter,
+  xenditAdapter,
+];
+
+const BY_ID = new Map(ADAPTERS.map((a) => [a.descriptor.id, a]));
+
+export function getAdapter(id: string): ProviderAdapter | undefined {
+  return BY_ID.get(id);
 }
 
-export interface ChargeRequest {
-  transactionId: string;
-  amountMinor: number;
-  currency: string;
-  reference: string;
-  customerEmail?: string;
-  paymentMethod: string;
-  metadata?: Record<string, unknown>;
+export function listDescriptors(): ProviderDescriptor[] {
+  return ADAPTERS.map((a) => a.descriptor);
 }
 
-export type ChargeResult =
-  | { status: "successful"; providerReference: string }
-  | { status: "pending"; providerReference: string }
-  | { status: "failed"; providerReference: string; failure: FailureInfo };
+export const SANDBOX_PROVIDER_IDS = new Set(["sandbox", "sandbox_backup"]);
 
-export interface RefundRequest {
-  transactionId: string;
-  providerReference?: string;
-  amountMinor: number;
-  currency: string;
-  reason?: string;
-}
-
-export type RefundResult =
-  | { status: "successful"; providerRefundReference: string }
-  | { status: "failed"; failure: FailureInfo };
-
-export interface PaymentProviderAdapter {
-  id: string;
-  displayName: string;
-  /** Whether this adapter can process the given method/currency pair. */
-  supports(paymentMethod: string, currency: string): boolean;
-  charge(req: ChargeRequest): Promise<ChargeResult>;
-  refund(req: RefundRequest): Promise<RefundResult>;
-}
-
-// ---------------------------------------------------------------------------
-// Sandbox adapter — deterministic failure simulation (prompt §32, §35)
-// ---------------------------------------------------------------------------
-const SANDBOX_SIMULATIONS: Record<string, FailureInfo> = {
-  issuer_decline: {
-    category: "issuer_decline",
-    code: "sandbox_card_declined",
-    message: "The issuer declined this payment (simulated). Do not retry without a new attempt method.",
-    retryable: false,
-  },
-  insufficient_funds: {
-    category: "insufficient_funds",
-    code: "sandbox_insufficient_funds",
-    message: "The account/wallet has insufficient funds (simulated).",
-    retryable: false,
-  },
-  timeout: {
-    category: "timeout",
-    code: "sandbox_timeout",
-    message: "The provider timed out before a decision (simulated). Safe to retry with the same reference.",
-    retryable: true,
-  },
-  provider_failure: {
-    category: "temporary_provider_failure",
-    code: "sandbox_provider_error",
-    message: "The provider returned a temporary error (simulated). Retry may succeed.",
-    retryable: true,
-  },
-  network_error: {
-    category: "network_error",
-    code: "sandbox_network_error",
-    message: "Network error while contacting the provider (simulated).",
-    retryable: true,
-  },
-  fraud_rejection: {
-    category: "fraud_rejection",
-    code: "sandbox_fraud_rejected",
-    message: "Blocked by provider-side fraud screening (simulated).",
-    retryable: false,
-  },
-  invalid_payment_information: {
-    category: "invalid_payment_information",
-    code: "sandbox_invalid_details",
-    message: "The payment details failed validation (simulated).",
-    retryable: false,
-  },
-  customer_cancellation: {
-    category: "customer_cancellation",
-    code: "sandbox_cancelled",
-    message: "The customer cancelled before completing (simulated).",
-    retryable: true,
-  },
-};
-
-export const SANDBOX_SIMULATION_KEYS = Object.keys(SANDBOX_SIMULATIONS);
-
-export const sandboxAdapter: PaymentProviderAdapter = {
-  id: "sandbox",
-  displayName: "RAEVOLT Sandbox Rail",
-  supports: () => true, // the sandbox rail accepts every method/currency pair
-  async charge(req) {
-    const simulate = (req.metadata?.["simulate"] as string | undefined)?.toLowerCase();
-    const providerReference = `sbx_${req.transactionId.slice(-10)}_${Math.floor(Math.random() * 1e6)
-      .toString()
-      .padStart(6, "0")}`;
-
-    if (simulate && simulate !== "success" && simulate !== "pending") {
-      const failure = SANDBOX_SIMULATIONS[simulate] ?? {
-        category: "invalid_payment_information" as FailureCategory,
-        code: "sandbox_unknown_simulation",
-        message: `Unknown simulate directive '${simulate}'.`,
-        retryable: false,
-      };
-      return { status: "failed", providerReference, failure };
-    }
-
-    if (simulate === "pending") {
-      return { status: "pending", providerReference };
-    }
-
-    return { status: "successful", providerReference };
-  },
-  async refund(req) {
-    return {
-      status: "successful",
-      providerRefundReference: `sbxr_${req.transactionId.slice(-8)}_${Math.floor(Math.random() * 1e6)
-        .toString()
-        .padStart(6, "0")}`,
-    };
-  },
-};
-
-// ---------------------------------------------------------------------------
-// Routing engine (prompt §13)
-// ---------------------------------------------------------------------------
-// v1 routing: provider availability by environment. The structure (candidate
-// list, capability filter, health/fee hooks) is the seam where success-rate,
-// latency, cost and merchant-preference routing land in a later stage.
-export class ProviderUnavailableError extends Error {
-  constructor(message: string) {
-    super(message);
+/** Platform-level credentials from the environment (per-merchant connections override these). */
+export function envCredentialsFor(d: ProviderDescriptor, env: Record<string, string | undefined>): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const [field, varName] of Object.entries(d.envCredentials)) {
+    const val = env[varName];
+    if (val) out[field] = val;
   }
-}
-
-export function routingCandidates(environment: "sandbox" | "production"): PaymentProviderAdapter[] {
-  if (environment === "sandbox") return [sandboxAdapter];
-  // Production has NO adapters configured yet. RAEVOLT does not pretend to
-  // have live processor connectivity (prompt §3). Register real adapters here
-  // when they are actually configured.
-  return [];
-}
-
-export function selectProvider(
-  environment: "sandbox" | "production",
-  paymentMethod: string,
-  currency: string,
-): PaymentProviderAdapter {
-  const candidates = routingCandidates(environment).filter((p) => p.supports(paymentMethod, currency));
-  if (candidates.length === 0) {
-    throw new ProviderUnavailableError(
-      `No payment provider is configured for environment '${environment}' ` +
-        `(method=${paymentMethod}, currency=${currency}).`,
-    );
-  }
-  return candidates[0]; // primary; fallback logic lands with real providers
+  const missing = d.credentials.filter((c) => c.required && !out[c.key]);
+  return missing.length === 0 ? out : null;
 }

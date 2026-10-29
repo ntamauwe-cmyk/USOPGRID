@@ -1,4 +1,4 @@
-// RAEVOLT idempotency engine (prompt §9) — financial correctness first.
+// USOPGRID idempotency engine — financial correctness first.
 //
 // The same payment request must never create two financial transactions.
 // Flow: (orgId, Idempotency-Key, fingerprint) → status. A retried request with

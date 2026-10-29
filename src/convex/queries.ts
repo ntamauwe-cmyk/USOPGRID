@@ -1,14 +1,16 @@
-// RAEVOLT dashboard read/write surface. Every query resolves tenant context
+// USOPGRID dashboard read/write surface. Every query resolves tenant context
 // server-side via requireOrgMember so data isolation holds regardless of UI.
 
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
 import { internal, api } from "./_generated/api";
-import { requireOrgMember, requirePermissionFor, getOrgForMember } from "./lib/rbac";
+import { requireOrgMember, requirePermissionFor, getOrgForMember, requireSensitive } from "./lib/rbac";
 import { PERMISSIONS } from "./schema";
 import { logAudit } from "./lib/audit";
-import type { TransactionSummary } from "./payments";
+import { computeOverview, SUCCESS_LIKE } from "./lib/analytics";
+import type { TransactionSummary, ProcessResult } from "./payments";
+import type { Id } from "./_generated/dataModel";
 
 // ---------------------------------------------------------------------------
 // Transactions list — filters + cursor pagination
@@ -86,7 +88,7 @@ export const listTransactions = query({
 });
 
 // ---------------------------------------------------------------------------
-// Transaction 360 — one complete view (prompt §38)
+// Transaction 360 — one complete view
 // ---------------------------------------------------------------------------
 export const getTransaction360 = query({
   args: { transactionId: v.string() },
@@ -117,10 +119,43 @@ export const getTransaction360 = query({
       .collect();
 
     const merchant = await ctx.db.get(txn.merchantId);
+    const attempts = await ctx.db.query("paymentAttempts").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+    const routing = await ctx.db.query("routingDecisions").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).first();
+    const refunds = await ctx.db.query("refunds").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+    const recovery = await ctx.db.query("recoveryJobs").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
 
     return {
       transaction: txn,
       merchantName: merchant?.name ?? "Merchant",
+      attempts: attempts
+        .sort((a, b) => a.attempt - b.attempt)
+        .map((a) => ({
+          attempt: a.attempt,
+          providerId: a.providerId,
+          connectionId: a.connectionId,
+          status: a.status,
+          providerReference: a.providerReference ?? null,
+          latencyMs: a.latencyMs,
+          probe: a.probe,
+          failure: a.failureCode ? { category: a.failureCategory ?? "", code: a.failureCode, message: a.failureMessage ?? "" } : null,
+          startedAt: a.startedAt,
+        })),
+      routing: routing
+        ? {
+            explanation: routing.explanation,
+            chain: routing.chain.map((c) => c.providerId),
+            matchedRules: routing.matchedRules,
+            evaluations: (routing.evaluations as { providerId: string; eligible: boolean; score: number; reasons: string[]; estimatedFeeMinor: number | null }[]).map((e) => ({
+              providerId: e.providerId,
+              eligible: e.eligible,
+              score: e.score,
+              reasons: e.reasons,
+              estimatedFeeMinor: e.estimatedFeeMinor,
+            })),
+          }
+        : null,
+      refunds: refunds.map((r) => ({ refundId: r.refundId, amountMinor: r.amountMinor, status: r.status, reason: r.reason ?? null, createdAt: r.createdAt, providerRefundReference: r.providerRefundReference ?? null })),
+      recovery: recovery.map((j) => ({ kind: j.kind, status: j.status, checksDone: j.checksDone, nextCheckAt: j.nextCheckAt, lastResult: j.lastResult ?? null })),
       events: events.map((e) => ({
         _id: e._id,
         type: e.type,
@@ -154,89 +189,62 @@ export const getTransaction360 = query({
 });
 
 // ---------------------------------------------------------------------------
-// Overview stats — computed from transactions for the signed-in org
+// Overview stats — computed from real transactions with the shared metric
+// definitions in lib/analytics (currencies are never summed together).
 // ---------------------------------------------------------------------------
 export const getOverviewStats = query({
   args: { days: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const oc = await requireOrgMember(ctx);
-    const days = args.days ?? 30;
-    const since = Date.now() - days * 86_400_000;
-
+    const days = Math.min(Math.max(args.days ?? 30, 1), 365);
+    const to = Date.now();
+    const from = to - days * 86_400_000;
+    const env = (oc.org.environment ?? "sandbox") as "sandbox" | "production";
     const txns = await ctx.db
       .query("transactions")
-      .withIndex("by_org_created", (q) => q.eq("orgId", oc.orgId).gte("createdAt", since))
-      .collect();
+      .withIndex("by_org_env_created", (q) => q.eq("orgId", oc.orgId).eq("environment", env).gte("createdAt", from))
+      .take(20_000);
+    const o = computeOverview(txns, from, to);
 
-    const byDay = new Map<string, { volume: number; count: number; successful: number; failed: number }>();
-    let volume = 0;
-    let fees = 0;
-    let successful = 0;
-    let failed = 0;
-    let refunded = 0;
-    let pending = 0;
-    const currencyCounts = new Map<string, number>();
-    const methodCounts = new Map<string, number>();
-    const failureCategories = new Map<string, number>();
-
+    const merchant = await ctx.db.query("merchants").withIndex("by_org", (q) => q.eq("orgId", oc.orgId)).first();
+    const counts = Object.entries(o.volumeByCurrency).sort((a, b) => b[1] - a[1]);
+    const primaryCurrency = merchant?.defaultCurrency ?? counts[0]?.[0] ?? oc.org.settings?.currency ?? "USD";
+    const inPrimary = (r: { currency: string }) => r.currency === primaryCurrency;
+    const seriesByDay = new Map(o.daily.map((d) => [d.day, { day: d.day, volume: 0, count: d.payments, successful: d.successful, failed: d.failed }]));
     for (const t of txns) {
-      const d = new Date(t.createdAt);
-      const dayKey = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-      const bucket = byDay.get(dayKey) ?? { volume: 0, count: 0, successful: 0, failed: 0 };
-      bucket.count += 1;
-      if (t.status === "SUCCESSFUL" || t.status === "PARTIALLY_REFUNDED" || t.status === "REFUNDED") {
-        bucket.successful += 1;
-        bucket.volume += t.amountMinor;
-        volume += t.amountMinor;
-        fees += t.feeMinor ?? 0;
-      } else if (t.status === "FAILED") {
-        bucket.failed += 1;
-        failed += 1;
-        if (t.failureCategory) {
-          failureCategories.set(t.failureCategory, (failureCategories.get(t.failureCategory) ?? 0) + 1);
-        }
-      } else if (t.status === "PENDING" || t.status === "PROCESSING" || t.status === "CREATED") {
-        pending += 1;
-      }
-      if (t.status === "REFUNDED" || t.status === "PARTIALLY_REFUNDED") {
-        refunded += t.refundedMinor ?? 0;
-      }
-      currencyCounts.set(t.currency, (currencyCounts.get(t.currency) ?? 0) + 1);
-      methodCounts.set(t.paymentMethod, (methodCounts.get(t.paymentMethod) ?? 0) + 1);
-      byDay.set(dayKey, bucket);
+      if (!inPrimary(t) || !SUCCESS_LIKE.has(t.status)) continue;
+      const b = seriesByDay.get(new Date(t.createdAt).toISOString().slice(0, 10));
+      if (b) b.volume += t.amountMinor;
     }
-
-    const series = Array.from(byDay.entries())
-      .sort(([a], [b]) => (a < b ? -1 : 1))
-      .map(([day, v]) => ({ day, ...v }));
-
-    const total = txns.length;
-    const settled = successful; // attempts that reached SUCCESS
-    const topMethod = Array.from(methodCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
-
     return {
-      volume,
-      fees,
-      refunded,
-      successful,
-      failed,
-      pending,
-      total,
-      successRate: total > 0 ? Math.round((settled / Math.max(successful + failed, 1)) * 100) : 0,
-      series,
-      currencyCounts: Array.from(currencyCounts.entries()).map(([currency, count]) => ({ currency, count })),
-      methodCounts: Array.from(methodCounts.entries()).map(([method, count]) => ({ method, count })),
-      failureCategories: Array.from(failureCategories.entries())
-        .map(([category, count]) => ({ category, count }))
-        .sort((a, b) => b.count - a.count),
-      primaryCurrency: txns[0]?.currency ?? oc.org.settings?.currency ?? "NGN",
-      topMethod,
+      environment: env,
+      truncated: txns.length >= 20_000,
+      primaryCurrency,
+      volume: o.volumeByCurrency[primaryCurrency] ?? 0,
+      fees: o.feesByCurrency[primaryCurrency] ?? 0,
+      refunded: o.refundedByCurrency[primaryCurrency] ?? 0,
+      volumeByCurrency: o.volumeByCurrency,
+      successful: o.totals.successful,
+      failed: o.totals.failed + o.totals.declined,
+      declined: o.totals.declined,
+      pending: o.totals.pending,
+      exceptions: o.totals.exceptions,
+      total: o.totals.payments,
+      successRate: o.totals.successRate === null ? 0 : Math.round(o.totals.successRate * 1000) / 10,
+      failoverRate: o.totals.failoverRate,
+      series: [...seriesByDay.values()],
+      currencyCounts: o.byCurrency.map((b) => ({ currency: b.key, count: b.count })),
+      methodCounts: o.byMethod.map((b) => ({ method: b.key, count: b.count })),
+      countryCounts: o.byCountry.map((b) => ({ country: b.key, count: b.count, successRate: b.successRate })),
+      providerCounts: o.byProvider.map((b) => ({ provider: b.key, count: b.count, successRate: b.successRate })),
+      failureCategories: o.failureReasons.map((r) => ({ category: r.category, code: r.code, count: r.count })),
+      topMethod: o.byMethod[0]?.key ?? null,
     };
   },
 });
 
 // ---------------------------------------------------------------------------
-// Dashboard-initiated payments — same engine as the API (prompt §5).
+// Dashboard-initiated payments — same engine as the API.
 // Actions (not mutations) because the provider adapter call is async.
 // ---------------------------------------------------------------------------
 export const resolvePaymentContext = query({
@@ -256,6 +264,7 @@ export const resolvePaymentContext = query({
       merchantId: merchant._id,
       environment: (oc.org.environment ?? "sandbox") as "sandbox" | "production",
       currency: merchant.defaultCurrency,
+      userId: oc.userId,
     };
   },
 });
@@ -268,61 +277,57 @@ export const createDashboardPayment = action({
     customerEmail: v.optional(v.string()),
     customerName: v.optional(v.string()),
     paymentMethod: v.string(),
+    country: v.optional(v.string()),
     simulate: v.optional(v.string()),
     description: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<TransactionSummary> => {
-    const pc = await ctx.runQuery(api.queries.resolvePaymentContext, {});
-
-    if (!Number.isInteger(args.amountMinor) || args.amountMinor <= 0) {
-      throw new ConvexError("Amount must be a positive integer of minor units");
-    }
-
-    const reference =
-      args.reference?.trim() || `dash_${Date.now().toString(36)}`;
-
-    // Route through the same payment action as the HTTP API so behavior is
-    // identical across entry points.
-    const result = await ctx.runAction(internal.payments.processPaymentInternal, {
+    const pc: { orgId: Id<"organizations">; merchantId: Id<"merchants">; environment: "sandbox" | "production"; userId: Id<"users"> } = await ctx.runQuery(api.queries.resolvePaymentContext, {});
+    const reference = args.reference?.trim() || `dash_${Date.now().toString(36)}`;
+    // Same engine as the public API, so behaviour is identical across entry points.
+    const result: ProcessResult = await ctx.runAction(internal.payments.processPaymentInternal, {
       orgId: pc.orgId,
       merchantId: pc.merchantId,
       environment: pc.environment,
       amountMinor: args.amountMinor,
-      currency: args.currency,
+      currency: args.currency.toUpperCase(),
       reference,
       paymentMethod: args.paymentMethod,
-      customerEmail: args.customerEmail,
+      country: args.country?.toUpperCase() || undefined,
+      customerEmail: args.customerEmail?.trim().toLowerCase() || undefined,
       customerName: args.customerName,
-      metadata: args.simulate || args.description
-        ? { simulate: args.simulate, description: args.description }
-        : undefined,
+      description: args.description,
+      // Simulation directives only ever reach sandbox rails.
+      metadata: pc.environment === "sandbox" && args.simulate ? { simulate: args.simulate } : undefined,
+      actor: pc.userId,
     });
-
-    if (result.kind === "no_provider") {
-      throw new ConvexError(result.error?.message ?? "No payment provider is configured for this environment.");
-    }
-    if (!result.transaction) {
-      throw new ConvexError("Payment processing failed");
+    if (result.kind === "rejected" || !result.transaction) {
+      throw new ConvexError(result.error?.message ?? "Payment could not be created.");
     }
     return result.transaction;
+  },
+});
+
+export const resolveRefundContext = query({
+  args: {},
+  handler: async (ctx) => {
+    const oc = await requireSensitive(ctx, PERMISSIONS.REFUNDS_CREATE);
+    return { orgId: oc.orgId, userId: oc.userId };
   },
 });
 
 export const refundDashboardPayment = action({
   args: { transactionId: v.string(), amountMinor: v.optional(v.number()), reason: v.optional(v.string()) },
   handler: async (ctx, args): Promise<TransactionSummary> => {
-    await ctx.runQuery(api.queries.resolvePaymentContext, {});
-    const result = await ctx.runAction(internal.payments.refundInternal, {
+    const rc: { orgId: Id<"organizations">; userId: Id<"users"> } = await ctx.runQuery(api.queries.resolveRefundContext, {});
+    const result: { kind: "error" | "done"; message?: string; transaction?: TransactionSummary } = await ctx.runAction(internal.payments.refundInternal, {
       transactionId: args.transactionId,
+      orgId: rc.orgId,
       amountMinor: args.amountMinor,
       reason: args.reason,
+      actor: rc.userId,
     });
-    if (result.kind === "error") {
-      throw new ConvexError(result.message ?? "Refund failed");
-    }
-    if (!result.transaction) {
-      throw new ConvexError("Refund failed");
-    }
+    if (result.kind === "error" || !result.transaction) throw new ConvexError(result.message ?? "Refund failed");
     return result.transaction;
   },
 });

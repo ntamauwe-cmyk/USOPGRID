@@ -1,4 +1,4 @@
-// RAEVOLT payment links (prompt §21) — shareable checkout. linkId is public;
+// USOPGRID payment links — shareable checkout. linkId is public;
 // checkout resolves it through an unauthenticated query exposing only
 // non-sensitive fields. Payments through a link use the standard engine.
 import { v } from "convex/values";

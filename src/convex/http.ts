@@ -1,46 +1,48 @@
 import { httpRouter } from "convex/server";
 import { auth } from "./auth";
 import * as api from "./api";
+import { receive as providerWebhook } from "./providerWebhooks";
 
 const http = httpRouter();
 
 auth.addHttpRoutes(http);
 
 // ---------------------------------------------------------------------------
-// RAEVOLT public API — versioned from day one (prompt §31)
+// USOPGRID public API — /api/v1
 // ---------------------------------------------------------------------------
-http.route({ path: "/api/v1/health", method: "GET", handler: api.health });
-http.route({ path: "/api/v1/payments", method: "POST", handler: api.createPayment });
-http.route({ pathPrefix: "/api/v1/payments/", method: "GET", handler: api.getPayment });
-http.route({ pathPrefix: "/api/v1/payments/", method: "POST", handler: api.refundPayment });
-http.route({ path: "/api/v1/balance", method: "GET", handler: api.getBalance });
-http.route({ path: "/api/v1/settlements", method: "GET", handler: api.listSettlements });
+const routes: [string, "GET" | "POST", Parameters<typeof http.route>[0]["handler"], boolean?][] = [
+  ["/api/v1/health", "GET", api.health],
+  ["/api/v1/openapi.json", "GET", api.openapi],
+  ["/api/v1/reference", "GET", api.referenceData],
+  ["/api/v1/payments", "POST", api.createPayment],
+  ["/api/v1/payments", "GET", api.listPayments],
+  ["/api/v1/payments/", "GET", api.getPayment, true],
+  ["/api/v1/payments/", "POST", api.refundPayment, true],
+  ["/api/v1/providers", "GET", api.listProviders],
+  ["/api/v1/routing/simulate", "POST", api.simulateRouting],
+  ["/api/v1/fx/quotes", "POST", api.createFxQuote],
+  ["/api/v1/balance", "GET", api.getBalance],
+  ["/api/v1/settlements", "GET", api.listSettlements],
+  ["/api/v1/payouts", "POST", api.createPayout],
+  ["/api/v1/payouts", "GET", api.listPayouts],
+  ["/api/v1/customers", "GET", api.listCustomers],
+  // Payment links (public, link-scoped)
+  ["/api/v1/checkout/", "GET", api.getLinkPublic, true],
+  ["/api/v1/checkout/", "POST", api.checkoutWithLink, true],
+  // Inbound provider webhooks (signature-verified per provider)
+  ["/api/v1/webhooks/providers/", "POST", providerWebhook, true],
+];
 
-// ---------------------------------------------------------------------------
-// Payments via payment link (public, authenticated by the link id)
-// ---------------------------------------------------------------------------
-http.route({ pathPrefix: "/api/v1/checkout/", method: "GET", handler: api.getLinkPublic });
-http.route({ pathPrefix: "/api/v1/checkout/", method: "POST", handler: api.checkoutWithLink });
-
-// ---------------------------------------------------------------------------
-// Payouts (prompt §25)
-// ---------------------------------------------------------------------------
-http.route({ path: "/api/v1/payouts", method: "POST", handler: api.createPayout });
-http.route({ path: "/api/v1/payouts", method: "GET", handler: api.listPayouts });
-
-// ---------------------------------------------------------------------------
-// Customers (prompt §20)
-// ---------------------------------------------------------------------------
-http.route({ path: "/api/v1/customers", method: "GET", handler: api.listCustomers });
-
-// CORS preflight for the API surface
-http.route({ path: "/api/v1/health", method: "OPTIONS", handler: api.corsHandler });
-http.route({ path: "/api/v1/payments", method: "OPTIONS", handler: api.corsHandler });
-http.route({ pathPrefix: "/api/v1/payments/", method: "OPTIONS", handler: api.corsHandler });
-http.route({ path: "/api/v1/balance", method: "OPTIONS", handler: api.corsHandler });
-http.route({ path: "/api/v1/settlements", method: "OPTIONS", handler: api.corsHandler });
-http.route({ pathPrefix: "/api/v1/checkout/", method: "OPTIONS", handler: api.corsHandler });
-http.route({ path: "/api/v1/payouts", method: "OPTIONS", handler: api.corsHandler });
-http.route({ path: "/api/v1/customers", method: "OPTIONS", handler: api.corsHandler });
+const preflight = new Set<string>();
+for (const [path, method, handler, prefix] of routes) {
+  if (prefix) http.route({ pathPrefix: path, method, handler });
+  else http.route({ path, method, handler });
+  const key = `${prefix ? "p" : "x"}:${path}`;
+  if (!preflight.has(key)) {
+    preflight.add(key);
+    if (prefix) http.route({ pathPrefix: path, method: "OPTIONS", handler: api.corsHandler });
+    else http.route({ path, method: "OPTIONS", handler: api.corsHandler });
+  }
+}
 
 export default http;

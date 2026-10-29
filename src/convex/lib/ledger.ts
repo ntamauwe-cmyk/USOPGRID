@@ -1,4 +1,4 @@
-// RAEVOLT double-entry ledger (prompt §10) — the financial source of truth.
+// USOPGRID double-entry ledger — the financial source of truth.
 //
 // Invariants:
 //  1. Every posting group (ledgerRef) is balanced: Σdebits = Σcredits per currency.
@@ -80,7 +80,7 @@ export async function getOrCreateAccount(
 }
 
 // ---------------------------------------------------------------------------
-// postDoubleEntry — one balanced posting group, atomically (prompt §47)
+// postDoubleEntry — one balanced posting group, atomically
 // ---------------------------------------------------------------------------
 export interface Posting {
   account: {

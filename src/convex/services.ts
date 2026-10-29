@@ -1,10 +1,10 @@
-// RAEVOLT service layer: settlements, reconciliation, API keys, webhook
+// USOPGRID service layer: settlements, reconciliation, API keys, webhook
 // endpoints. RBAC checks happen here, once, before any financial operation.
 
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
 import { action, mutation, query } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { requireOrgMember, requireOrgMemberAction } from "./lib/rbac";
 import { PERMISSIONS } from "./schema";
@@ -35,7 +35,7 @@ async function audit(ctx: ActionCtx, entry: AuditEntry) {
 }
 
 // ---------------------------------------------------------------------------
-// Settlement batches (prompt §18)
+// Settlement batches
 // ---------------------------------------------------------------------------
 export const listSettlementBatches = query({
   args: {
@@ -146,7 +146,7 @@ export const settleSettlementBatch = action({
 });
 
 // ---------------------------------------------------------------------------
-// Reconciliation (prompt §19)
+// Reconciliation
 // ---------------------------------------------------------------------------
 export const runReconciliation = action({
   args: {},
@@ -219,7 +219,7 @@ export const resolveReconException = mutation({
 });
 
 // ---------------------------------------------------------------------------
-// API keys (prompt §7, §31, §40) — shown once, stored hashed
+// API keys — shown once, stored hashed
 // ---------------------------------------------------------------------------
 export const listApiKeys = query({
   args: {},
@@ -240,6 +240,7 @@ export const listApiKeys = query({
         mode: k.mode,
         prefix: k.prefix,
         status: k.status,
+        expiresAt: k.expiresAt ?? null,
         lastUsedAt: k.lastUsedAt ?? null,
         createdAt: k.createdAt,
       }));
@@ -257,6 +258,7 @@ export const createApiKey = action({
     if (!oc.permissions.has(PERMISSIONS.KEYS_MANAGE)) {
       throw new ConvexError("FORBIDDEN: missing permission 'keys:manage'");
     }
+    await ctx.runQuery(api.providers.assertSensitive, { permission: PERMISSIONS.KEYS_MANAGE });
     const { full, prefix } = generateApiKey(args.environment, args.mode);
     const hash = await hashApiKey(full);
     const keyId = await ctx.runMutation(internal.servicesInternal.insertApiKeyInternal, {
@@ -303,7 +305,7 @@ export const revokeApiKey = mutation({
 });
 
 // ---------------------------------------------------------------------------
-// Webhook endpoints (prompt §30)
+// Webhook endpoints
 // ---------------------------------------------------------------------------
 export const listWebhookEndpoints = query({
   args: {},
@@ -395,7 +397,7 @@ export const listWebhookDeliveries = query({
   },
 });
 
-// Re-queue a failed/dead delivery (prompt §30: replay). Tenant-checked.
+// Re-queue a failed/dead delivery (: replay). Tenant-checked.
 export const replayWebhookDelivery = mutation({
   args: { deliveryId: v.id("webhookDeliveries") },
   handler: async (ctx, args) => {
@@ -422,7 +424,7 @@ export const replayWebhookDelivery = mutation({
 });
 
 // ---------------------------------------------------------------------------
-// Audit log (prompt §39)
+// Audit log
 // ---------------------------------------------------------------------------
 export const listAuditLogs = query({
   args: {},
@@ -434,5 +436,37 @@ export const listAuditLogs = query({
       .withIndex("by_org_at", (q) => q.eq("orgId", oc.orgId))
       .order("desc")
       .take(100);
+  },
+});
+
+/**
+ * Rotate a key: issue a replacement with the same name/environment/mode and
+ * keep the old key working for a grace period (default 24 h) so deployments
+ * can roll over without downtime. The old key is then refused automatically.
+ */
+export const rotateApiKey = action({
+  args: { keyId: v.id("apiKeys"), graceHours: v.optional(v.number()) },
+  handler: async (ctx, args): Promise<{ keyId: string; fullKey: string; prefix: string; oldKeyExpiresAt: number }> => {
+    const oc = await requireOrgMemberAction(ctx);
+    if (!oc.permissions.has(PERMISSIONS.KEYS_MANAGE)) throw new ConvexError("FORBIDDEN: missing permission 'keys:manage'");
+    await ctx.runQuery(api.providers.assertSensitive, { permission: PERMISSIONS.KEYS_MANAGE });
+    const old = await ctx.runQuery(internal.servicesInternal.apiKeyByIdInternal, { keyId: args.keyId });
+    if (!old || old.orgId !== oc.orgId || old.status !== "active") throw new ConvexError("NOT_FOUND: active key");
+    const { full, prefix } = generateApiKey(old.environment, old.mode);
+    const hash = await hashApiKey(full);
+    const keyId = await ctx.runMutation(internal.servicesInternal.insertApiKeyInternal, {
+      orgId: oc.orgId,
+      name: old.name,
+      environment: old.environment,
+      mode: old.mode,
+      prefix,
+      hash,
+      userId: oc.userId,
+    });
+    const grace = Math.min(Math.max(args.graceHours ?? 24, 0), 168);
+    const oldKeyExpiresAt = Date.now() + grace * 3_600_000;
+    await ctx.runMutation(internal.servicesInternal.expireApiKeyInternal, { keyId: args.keyId, expiresAt: oldKeyExpiresAt, rotatedToKeyId: keyId });
+    await audit(ctx, { orgId: oc.orgId, actor: oc.userId, action: "key.rotated", resource: "apiKey", resourceId: args.keyId, after: { newKeyId: keyId, newPrefix: prefix, oldKeyExpiresAt } });
+    return { keyId, fullKey: full, prefix, oldKeyExpiresAt };
   },
 });

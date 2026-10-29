@@ -1,4 +1,5 @@
 // Internal queries backing the public API actions (tenant-scoped, engine-side).
+// Every query takes the orgId resolved from the API key — never from the request.
 
 import { v } from "convex/values";
 import { internalQuery } from "./_generated/server";
@@ -121,5 +122,56 @@ export const linkForCheckoutInternal = internalQuery({
     if (!link) return null;
     const merchant = await ctx.db.get(link.merchantId);
     return { link, merchantName: merchant?.name ?? "Merchant" };
+  },
+});
+
+export const orgInfoInternal = internalQuery({
+  args: { orgId: v.id("organizations") },
+  handler: async (ctx, { orgId }) => {
+    const org = await ctx.db.get(orgId);
+    return org ? { environment: (org.environment ?? "sandbox") as "sandbox" | "production", status: org.status ?? "active", name: org.name } : null;
+  },
+});
+
+export const listTransactionsInternal = internalQuery({
+  args: {
+    orgId: v.id("organizations"),
+    environment: v.union(v.literal("sandbox"), v.literal("production")),
+    status: v.optional(v.string()),
+    createdGte: v.optional(v.number()),
+    createdLte: v.optional(v.number()),
+    cursor: v.union(v.string(), v.null()),
+    limit: v.number(),
+  },
+  handler: async (ctx, a) => {
+    const page = await ctx.db
+      .query("transactions")
+      .withIndex("by_org_env_created", (q) => {
+        const b = q.eq("orgId", a.orgId).eq("environment", a.environment);
+        if (a.createdGte !== undefined && a.createdLte !== undefined) return b.gte("createdAt", a.createdGte).lte("createdAt", a.createdLte);
+        if (a.createdGte !== undefined) return b.gte("createdAt", a.createdGte);
+        if (a.createdLte !== undefined) return b.lte("createdAt", a.createdLte);
+        return b;
+      })
+      .order("desc")
+      .filter((q) => (a.status ? q.eq(q.field("status"), a.status) : true))
+      .paginate({ numItems: a.limit, cursor: a.cursor });
+    return page;
+  },
+});
+
+export const transactionDetailInternal = internalQuery({
+  args: { orgId: v.id("organizations"), transactionId: v.string() },
+  handler: async (ctx, a) => {
+    const txn = await ctx.db
+      .query("transactions")
+      .withIndex("by_transaction_id", (q) => q.eq("transactionId", a.transactionId))
+      .unique();
+    if (!txn || txn.orgId !== a.orgId) return null;
+    const attempts = await ctx.db.query("paymentAttempts").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+    const routing = await ctx.db.query("routingDecisions").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).first();
+    const refunds = await ctx.db.query("refunds").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+    const events = await ctx.db.query("transactionEvents").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+    return { txn, attempts, routing, refunds, events };
   },
 });

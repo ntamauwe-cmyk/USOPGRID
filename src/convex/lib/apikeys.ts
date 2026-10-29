@@ -1,8 +1,8 @@
-// RAEVOLT API key infrastructure (prompt §7, §31, §40).
+// USOPGRID API key infrastructure.
 // - Full key generated once, shown once, stored only as SHA-256 hash.
 // - Prefix stored for lookup/display ("sk_sandbox_a1b2…").
 // - Environment separation enforced at key level: sandbox keys never touch
-//   production providers and vice versa (prompt §56).
+//   production providers and vice versa.
 
 import { sha256Hex, randomToken } from "./crypto";
 

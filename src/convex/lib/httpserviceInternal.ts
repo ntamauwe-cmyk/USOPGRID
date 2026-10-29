@@ -38,3 +38,39 @@ export const consumeRateLimitInternal = internalMutation({
 });
 
 export { RATE_LIMIT, RATE_WINDOW_MS };
+
+/** Per-key daily usage metering (requests, 4xx, 5xx, per route). */
+export const meterInternal = internalMutation({
+  args: { apiKeyId: v.id("apiKeys"), orgId: v.id("organizations"), route: v.string(), status: v.number() },
+  handler: async (ctx, a) => {
+    const day = new Date().toISOString().slice(0, 10);
+    const row = await ctx.db
+      .query("apiUsage")
+      .withIndex("by_key_day", (q) => q.eq("apiKeyId", a.apiKeyId).eq("day", day))
+      .unique();
+    const e4 = a.status >= 400 && a.status < 500 ? 1 : 0;
+    const e5 = a.status >= 500 ? 1 : 0;
+    if (!row) {
+      await ctx.db.insert("apiUsage", {
+        orgId: a.orgId,
+        apiKeyId: a.apiKeyId,
+        day,
+        requests: 1,
+        errors4xx: e4,
+        errors5xx: e5,
+        byRoute: { [a.route]: 1 },
+        updatedAt: Date.now(),
+      });
+      return;
+    }
+    const byRoute = { ...(row.byRoute as Record<string, number>) };
+    byRoute[a.route] = (byRoute[a.route] ?? 0) + 1;
+    await ctx.db.patch(row._id, {
+      requests: row.requests + 1,
+      errors4xx: row.errors4xx + e4,
+      errors5xx: row.errors5xx + e5,
+      byRoute,
+      updatedAt: Date.now(),
+    });
+  },
+});

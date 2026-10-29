@@ -1,4 +1,4 @@
-// RAEVOLT payouts engine (prompt §25, §26) + beneficiaries.
+// USOPGRID payouts engine + beneficiaries.
 //
 // Payout lifecycle: PENDING → PROCESSING → SUCCESSFUL | FAILED | REVERSED.
 // Ledger model (all balanced groups):
@@ -8,7 +8,7 @@
 //   reversed: Dr merchant_balance (amount)  / Cr provider clearing (rail back)
 //
 // Beneficiary account numbers are never stored — masked display + sha-256
-// hash for duplicate detection only (prompt §26, §40).
+// hash for duplicate detection only.
 
 import { v } from "convex/values";
 import { ConvexError } from "convex/values";
@@ -88,7 +88,7 @@ export const createBeneficiary = mutation({
       accountHash,
       currency: args.currency,
       // v1 sandbox: accounts verify immediately; real verification is a
-      // provider/verification-adapter concern for a later stage (prompt §42).
+      // provider/verification-adapter concern for a later stage.
       status: "verified",
       verifiedAt: Date.now(),
       createdByUserId: oc.userId,
@@ -239,7 +239,7 @@ export const payoutInternal = internalAction({
         actor: "system",
       });
 
-      // Sandbox payout rail — real payout adapters plug in here (prompt §12).
+      // Sandbox payout rail — real payout adapters plug in here.
       const simulate = args.simulate;
       let ok = true;
       let failure: { category: string; code: string; message: string; retryable: boolean } | undefined;
@@ -331,7 +331,7 @@ export const createPayoutRecordInternal = internalMutation({
     const feeMinor = payoutFee(args.amountMinor);
     const debitTotal = args.amountMinor + feeMinor;
 
-    // Balance check straight from the ledger (prompt §10).
+    // Balance check straight from the ledger.
     const accountCode = merchantAccountCode(merchant._id, currency);
     const account = await ctx.db
       .query("ledgerAccounts")
@@ -410,7 +410,7 @@ export const createPayoutRecordInternal = internalMutation({
                   currency,
                   kind: ACCOUNT_KINDS.PLATFORM_FEES,
                   code: feesAccountCode(currency),
-                  name: `RAEVOLT fees ${currency}`,
+                  name: `USOPGRID fees ${currency}`,
                 },
                 direction: "credit" as const,
                 amountMinor: feeMinor,
@@ -557,7 +557,7 @@ export const completePayoutInternal = internalMutation({
                     currency: p.currency,
                     kind: ACCOUNT_KINDS.PLATFORM_FEES,
                     code: feesAccountCode(p.currency),
-                    name: `RAEVOLT fees ${p.currency}`,
+                    name: `USOPGRID fees ${p.currency}`,
                   },
                   direction: "debit" as const,
                   amountMinor: p.feeMinor,
