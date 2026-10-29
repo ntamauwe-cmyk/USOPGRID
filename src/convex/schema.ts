@@ -44,6 +44,8 @@ export const PERMISSIONS = {
   ANALYTICS_VIEW: "analytics:view",
   RISK_MANAGE: "risk:manage",
   SECURITY_MANAGE: "security:manage",
+  /** Second approver for payouts (two-person rule). */
+  PAYOUTS_APPROVE: "payouts:approve",
 } as const;
 
 const P = PERMISSIONS;
@@ -51,7 +53,7 @@ export const ROLE_PERMISSIONS: Record<Role, string[]> = {
   owner: Object.values(PERMISSIONS),
   admin: Object.values(PERMISSIONS).filter((p) => p !== P.SECURITY_MANAGE),
   developer: [P.KEYS_MANAGE, P.WEBHOOKS_MANAGE, P.PAYMENTS_CREATE, P.PROVIDERS_MANAGE, P.ROUTING_MANAGE, P.ANALYTICS_VIEW],
-  finance: [P.SETTLEMENT_VIEW, P.LEDGER_VIEW, P.RECON_MANAGE, P.REFUNDS_CREATE, P.AUDIT_VIEW, P.ANALYTICS_VIEW],
+  finance: [P.SETTLEMENT_VIEW, P.LEDGER_VIEW, P.RECON_MANAGE, P.REFUNDS_CREATE, P.AUDIT_VIEW, P.ANALYTICS_VIEW, P.PAYOUTS_APPROVE],
   operations: [P.SETTLEMENT_VIEW, P.LEDGER_VIEW, P.ROUTING_MANAGE, P.ANALYTICS_VIEW, P.REFUNDS_CREATE],
   risk_compliance: [P.RISK_MANAGE, P.AUDIT_VIEW, P.ANALYTICS_VIEW, P.LEDGER_VIEW],
   viewer: [P.ANALYTICS_VIEW],

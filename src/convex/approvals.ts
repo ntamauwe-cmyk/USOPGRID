@@ -35,7 +35,7 @@ async function userLabel(ctx: QueryCtx | MutationCtx, userId: Id<"users">): Prom
 }
 
 function permissionFor(kind: Doc<"approvalRequests">["kind"]): string {
-  return kind === "policy_change" ? PERMISSIONS.SECURITY_MANAGE : PERMISSIONS.PAYMENTS_CREATE;
+  return kind === "policy_change" ? PERMISSIONS.SECURITY_MANAGE : PERMISSIONS.PAYOUTS_APPROVE;
 }
 
 // ---------------------------------------------------------------------------
