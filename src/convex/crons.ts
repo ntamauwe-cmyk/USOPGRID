@@ -18,6 +18,9 @@ c.interval("refresh-fx-rates", { hours: 1 }, internal.fxrates.refreshRatesIntern
 // Idempotency records expire after 24 h.
 c.interval("purge-idempotency-keys", { hours: 1 }, internal.lib.idempotency.purgeExpiredInternal, {});
 
+// Subscription renewals and retries of failed renewals.
+c.interval("billing-renewals", { minutes: 5 }, internal.billing.runDue, {});
+
 // Approval requests older than 72 h can no longer be approved.
 c.interval("expire-approvals", { hours: 1 }, internal.approvals.expireStale, {});
 

@@ -7,7 +7,7 @@ import { action, mutation, query } from "./_generated/server";
 import { api, internal } from "./_generated/api";
 import type { ActionCtx } from "./_generated/server";
 import { requireOrgMember, requireOrgMemberAction, requireSensitive } from "./lib/rbac";
-import { normaliseRules } from "./lib/ipallow";
+import { normaliseRules, unsafeCallbackUrl } from "./lib/ipallow";
 import { PERMISSIONS } from "./schema";
 import { generateApiKey, hashApiKey } from "./lib/apikeys";
 import { randomToken } from "./lib/crypto";
@@ -346,15 +346,8 @@ export const createWebhookEndpoint = mutation({
     if (!oc.permissions.has(PERMISSIONS.WEBHOOKS_MANAGE)) {
       throw new ConvexError("FORBIDDEN: missing permission 'webhooks:manage'");
     }
-    let parsed: URL;
-    try {
-      parsed = new URL(args.url);
-    } catch {
-      throw new ConvexError("VALIDATION_ERROR: url must be a valid absolute URL");
-    }
-    if (parsed.protocol !== "https:") {
-      throw new ConvexError("VALIDATION_ERROR: webhook URLs must use HTTPS");
-    }
+    const unsafe = unsafeCallbackUrl(args.url);
+    if (unsafe) throw new ConvexError(`VALIDATION_ERROR: webhook URL ${unsafe}`);
     const secret = `whsec_${randomToken(24)}`;
     const id = await ctx.db.insert("webhookEndpoints", {
       orgId: oc.orgId,

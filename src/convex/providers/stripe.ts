@@ -110,7 +110,7 @@ export const stripeAdapter: ProviderAdapter = {
     countries: "global",
     currencies: "all",
     methods: ["card", "wallet", "bank_transfer", "direct_debit", "bnpl", "open_banking"],
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, recurring: true },
     limits: { USD: { minMinor: 50, maxMinor: 99_999_999 }, EUR: { minMinor: 50 }, GBP: { minMinor: 30 } },
     pricing: { pctBps: 290, fixedMinor: 30, fixedCurrency: "USD", notes: "US list price for domestic cards; varies by country and method." },
     credentials: [
@@ -131,10 +131,27 @@ export const stripeAdapter: ProviderAdapter = {
       receipt_email: req.customer?.email,
       metadata: { usopgrid_transaction_id: req.transactionId, usopgrid_reference: req.reference },
     };
-    if (req.paymentToken) {
+    if (req.recurring) {
+      // Saved method: "cus_…|pm_…", charged off-session (customer not present).
+      const [customer, pm] = (req.paymentToken ?? "").split("|");
+      if (!customer?.startsWith("cus_") || !pm?.startsWith("pm_")) {
+        return { status: "failed", failure: failure("invalid_payment_information", "bad_saved_method", "Saved Stripe payment method is malformed.", { safeToFailover: false }) };
+      }
+      Object.assign(body, { customer, payment_method: pm, off_session: "true", confirm: "true" });
+    } else if (req.paymentToken) {
       body.payment_method = req.paymentToken;
       body.confirm = "true";
       if (req.returnUrl) body.return_url = req.returnUrl;
+      if (req.savePaymentMethod) {
+        // Keep the card for future off-session charges: needs a Stripe customer.
+        const c = await providerFetch(ctx, `${API}/customers`, {
+          method: "POST",
+          headers: headers(ctx, `${req.idempotencyKey}:customer`),
+          body: formEncode({ email: req.customer?.email, name: req.customer?.name, metadata: { usopgrid_transaction_id: req.transactionId } }),
+        });
+        const customerId = c.kind === "response" && c.status < 300 ? str(c.json, "id") : undefined;
+        if (customerId) Object.assign(body, { customer: customerId, setup_future_usage: "off_session", expand: ["payment_method"] });
+      }
     } else {
       body.automatic_payment_methods = { enabled: "true" };
     }
@@ -145,6 +162,17 @@ export const stripeAdapter: ProviderAdapter = {
     });
     if (o.kind === "response" && o.status >= 200 && o.status < 300) {
       const r = mapIntent(o.json);
+      const cust = str(o.json, "customer");
+      const pmId = str(o.json, "payment_method.id") ?? str(o.json, "payment_method");
+      if (req.savePaymentMethod && r.status === "successful" && cust && pmId?.startsWith("pm_")) {
+        r.reusableToken = {
+          token: `${cust}|${pmId}`,
+          brand: str(o.json, "payment_method.card.brand"),
+          last4: str(o.json, "payment_method.card.last4"),
+          expMonth: Number(get(o.json, "payment_method.card.exp_month")) || undefined,
+          expYear: Number(get(o.json, "payment_method.card.exp_year")) || undefined,
+        };
+      }
       if (!req.paymentToken && r.status === "requires_action") {
         r.nextAction = {
           type: "await_customer_confirmation",

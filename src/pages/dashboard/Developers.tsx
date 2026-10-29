@@ -79,6 +79,14 @@ const SANDBOX_EVENTS = [
   { event: "payment.refunded", when: "A full or partial refund completed" },
   { event: "refund.pending / refund.failed", when: "Refund awaiting confirmation, or refused" },
   { event: "payment.reconciliation_exception", when: "Provider and USOPGRID records disagree" },
+  { event: "payment_method.saved", when: "A customer's payment method was saved for future charges" },
+  { event: "subscription.created", when: "A customer was subscribed to a plan" },
+  { event: "subscription.renewed", when: "A renewal was paid and a new period started" },
+  { event: "invoice.paid", when: "A subscription invoice was paid" },
+  { event: "invoice.payment_failed", when: "A renewal attempt failed (includes the next retry time)" },
+  { event: "subscription.past_due", when: "A renewal failed and will be retried" },
+  { event: "subscription.unpaid", when: "Retries ran out or the decline was final" },
+  { event: "subscription.canceled", when: "A subscription ended" },
 ];
 
 export default function Developers() {

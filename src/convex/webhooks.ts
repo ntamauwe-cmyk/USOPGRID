@@ -3,6 +3,7 @@
 // and also triggerable immediately after payment events.
 
 import { v } from "convex/values";
+import { unsafeCallbackUrl } from "./lib/ipallow";
 import { internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
@@ -59,6 +60,12 @@ export const attemptDeliveryInternal = internalAction({
     const signature = await hmacSha256Hex(endpoint.secret, `${timestamp}.${payloadString}`);
 
     const attempt = delivery.attempts + 1;
+    const unsafe = unsafeCallbackUrl(endpoint.url);
+    if (unsafe) {
+      // Endpoint saved before URL checks existed: never call internal addresses.
+      await ctx.runMutation(internal.webhooks.deadLetterInternal, { deliveryId: delivery._id, error: `Endpoint URL ${unsafe}` });
+      return;
+    }
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 10_000);
@@ -74,6 +81,8 @@ export const attemptDeliveryInternal = internalAction({
         },
         body: payloadString,
         signal: controller.signal,
+        // A redirect could point at an internal address; receivers must answer directly.
+        redirect: "manual",
       });
       clearTimeout(timeout);
 
@@ -161,9 +170,9 @@ export const bumpAttemptInternal = internalMutation({
 });
 
 export const deadLetterInternal = internalMutation({
-  args: { deliveryId: v.id("webhookDeliveries") },
+  args: { deliveryId: v.id("webhookDeliveries"), error: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.deliveryId, { status: "dead", lastError: "max attempts reached" });
+    await ctx.db.patch(args.deliveryId, { status: "dead", lastError: args.error ?? "max attempts reached" });
   },
 });
 

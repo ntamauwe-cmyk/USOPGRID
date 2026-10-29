@@ -68,7 +68,7 @@ export const flutterwaveAdapter: ProviderAdapter = {
     countries: ["NG", "GH", "KE", "UG", "TZ", "RW", "ZA", "ZM", "CM", "CI", "SN", "BF", "ML", "BJ", "TG", "GA", "CD", "MW", "SL", "EG", "ET", "MA", "MZ", "GB", "US"],
     currencies: ["NGN", "GHS", "KES", "UGX", "TZS", "RWF", "ZAR", "ZMW", "XAF", "XOF", "MWK", "SLE", "EGP", "ETB", "MAD", "MZN", "CDF", "USD", "EUR", "GBP"],
     methods: ["card", "bank_transfer", "mobile_money", "ussd", "account_to_account", "qr", "open_banking"],
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true, recurring: true },
     payoutCurrencies: ["NGN", "GHS", "KES", "UGX", "TZS", "RWF", "ZAR", "ZMW", "XAF", "XOF", "EGP", "ETB", "USD", "EUR", "GBP"],
     pricing: { pctBps: 140, fixedMinor: 0, fixedCurrency: "NGN", capMinor: 200_000, notes: "Nigeria local cards 1.4%; international 3.8%. Varies by country." },
     credentials: [
@@ -81,6 +81,30 @@ export const flutterwaveAdapter: ProviderAdapter = {
   async charge(ctx, req) {
     if (!req.customer?.email) {
       return { status: "failed", failure: failure("invalid_payment_information", "email_required", "Flutterwave requires a customer email.", { safeToFailover: true }) };
+    }
+    // Saved card token (subscription renewal): merchant-initiated tokenized charge.
+    if (req.recurring) {
+      if (!req.paymentToken) return { status: "failed", failure: failure("invalid_payment_information", "token_required", "Saved card token missing.", { safeToFailover: false }) };
+      const t = await providerFetch(ctx, `${API}/tokenized-charges`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${requireCredential(ctx, "secretKey", NAME)}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token: req.paymentToken,
+          currency: req.currency,
+          country: req.country,
+          amount: Number(minorToDecimalString(req.amountMinor, req.currency)),
+          email: req.customer.email,
+          tx_ref: req.transactionId,
+          narration: req.description ?? req.reference,
+        }),
+      });
+      if (t.kind === "response" && t.status === 200 && str(t.json, "status") === "success") return mapTxn(t.json);
+      if (t.kind === "response" && t.status === 400) {
+        const msg = str(t.json, "message") ?? str(t.json, "data.processor_response") ?? "Declined";
+        return { status: "declined", failure: failure(/insufficient/i.test(msg) ? "insufficient_funds" : "issuer_decline", "declined", msg) };
+      }
+      const tf = classifyHttpFailure(t, NAME);
+      return tf ? { status: "failed", failure: tf } : { status: "unknown", failure: unknownOutcome(t, NAME) };
     }
     const o = await providerFetch(ctx, `${API}/payments`, {
       method: "POST",
@@ -218,6 +242,16 @@ export const flutterwaveAdapter: ProviderAdapter = {
           type: "payment",
           status: s === "successful" ? "successful" : s === "failed" ? "declined" : "pending",
           failure: s === "failed" ? failure("issuer_decline", "declined", str(d, "processor_response") ?? "Declined") : undefined,
+          reusableToken:
+            s === "successful" && str(d, "card.token")
+              ? {
+                  token: str(d, "card.token")!,
+                  brand: str(d, "card.type"),
+                  last4: str(d, "card.last_4digits"),
+                  expMonth: Number((str(d, "card.expiry") ?? "").split("/")[0]) || undefined,
+                  expYear: Number((str(d, "card.expiry") ?? "").split("/")[1]) ? 2000 + Number((str(d, "card.expiry") ?? "").split("/")[1]) : undefined,
+                }
+              : undefined,
         },
       ];
     }

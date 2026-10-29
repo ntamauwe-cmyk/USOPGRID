@@ -89,6 +89,23 @@ export interface ChargeRequest {
   returnUrl?: string;
   description?: string;
   metadata?: Record<string, unknown>;
+  /**
+   * Merchant-initiated charge of a saved payment method (subscription
+   * renewal): `paymentToken` is the provider's reusable token and no customer
+   * is present.
+   */
+  recurring?: boolean;
+  /** Ask the provider to keep the payment method for future charges. */
+  savePaymentMethod?: boolean;
+}
+
+/** A provider-issued reusable token plus safe display details. Never a card number. */
+export interface ReusableToken {
+  token: string;
+  brand?: string;
+  last4?: string;
+  expMonth?: number;
+  expYear?: number;
 }
 
 export type ChargeStatus = "successful" | "pending" | "requires_action" | "declined" | "failed" | "unknown";
@@ -105,6 +122,8 @@ export interface ChargeResult {
   /** Amount/currency the provider says it actually processed — checked against our record. */
   reportedAmountMinor?: number;
   reportedCurrency?: string;
+  /** Present when the provider returned a reusable token synchronously. */
+  reusableToken?: ReusableToken;
 }
 
 export interface StatusQuery {
@@ -174,6 +193,8 @@ export interface ProviderEvent {
   occurredAt?: number;
   failure?: FailureInfo;
   rawType: string;
+  /** Reusable token delivered with a successful payment (e.g. Paystack authorization). */
+  reusableToken?: ReusableToken;
 }
 
 export interface WebhookInput {
@@ -225,6 +246,8 @@ export interface ProviderDescriptor {
     settlementReports: boolean;
     /** Can send money to third-party bank / mobile-money accounts. */
     payouts?: boolean;
+    /** Merchant-initiated charges of saved payment methods (subscriptions). */
+    recurring?: boolean;
   };
   /** Currencies this provider can pay out in (when operations.payouts). */
   payoutCurrencies?: readonly string[];

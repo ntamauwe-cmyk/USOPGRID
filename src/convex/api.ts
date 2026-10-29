@@ -178,10 +178,12 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
   const customerPhone = optString(customer, 32, "phone") ?? optString(body, 32, "customer_phone", "customerPhone");
   const reference = optString(body, 120, "reference") ?? `ref_${crypto.randomUUID().replace(/-/g, "").slice(0, 18)}`;
   const metadata = sanitizeMetadata(pick(body, "metadata"));
+  const savePaymentMethod = pick(body, "save_payment_method", "savePaymentMethod") === true;
 
   if (!Number.isSafeInteger(amountMinor) || (amountMinor as number) <= 0) {
     throw new ApiError("validation_error", "amount must be a positive integer in the currency's minor unit (e.g. cents).");
   }
+  if (savePaymentMethod && !customerEmail) throw new ApiError("validation_error", "save_payment_method needs customer.email, so the saved method belongs to a customer.");
   if (!/^[A-Z]{3}$/.test(currency)) throw new ApiError("validation_error", "currency must be a 3-letter ISO 4217 code.");
   if (!(PAYMENT_METHODS as readonly string[]).includes(paymentMethod)) {
     throw new ApiError("validation_error", `payment_method must be one of: ${PAYMENT_METHODS.join(", ")}.`);
@@ -210,6 +212,7 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
     metadata,
     requestId,
     actor: key.prefix,
+    savePaymentMethod: savePaymentMethod || undefined,
   };
 
   const idemKey = request.headers.get("Idempotency-Key");
@@ -221,7 +224,7 @@ export const createPayment = endpoint("POST /payments", async (ctx, request, key
   if (idemKey.length > 255) throw new ApiError("validation_error", "Idempotency-Key must be at most 255 characters.");
 
   // Fingerprint covers client-supplied fields only (never server-generated ones).
-  const fp = await fingerprint({ amountMinor, currency, paymentMethod, country: country ?? null, reference: pick(body, "reference") ?? null, customerEmail: customerEmail ?? null, metadata: metadata ?? null, env: key.environment });
+  const fp = await fingerprint({ amountMinor, currency, paymentMethod, country: country ?? null, reference: pick(body, "reference") ?? null, customerEmail: customerEmail ?? null, metadata: metadata ?? null, env: key.environment, savePaymentMethod });
   const acquired = await ctx.runMutation(internal.lib.idempotency.acquireInternal, { orgId, key: idemKey, fp });
   if (acquired.type === "replay") return jsonOk(acquired.responseBody, acquired.statusCode, requestId);
   if (acquired.type === "conflict") throw new ApiError("idempotency_conflict", "This Idempotency-Key was already used with a different request body.");
@@ -572,6 +575,122 @@ export const listCustomers = endpoint("GET /customers", async (ctx, request, key
 // ---------------------------------------------------------------------------
 // Public (unauthenticated) endpoints
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Recurring billing: saved payment methods, plans, subscriptions
+// ---------------------------------------------------------------------------
+const billingError = (err: unknown): never => {
+  const msg = err instanceof Error ? err.message : String(err);
+  const m = /^(?:Uncaught ConvexError: )?(VALIDATION_ERROR|NOT_FOUND|CONFLICT|FORBIDDEN): (.*)$/s.exec(msg);
+  if (m) throw new ApiError(m[1] === "NOT_FOUND" ? "not_found" : m[1] === "CONFLICT" ? "conflict" : m[1] === "FORBIDDEN" ? "authorization_error" : "validation_error", m[2]);
+  throw err;
+};
+
+export const listPaymentMethods = endpoint("GET /payment_methods", async (ctx, request, key, requestId) => {
+  const email = new URL(request.url).searchParams.get("customer_email") ?? undefined;
+  const rows = await ctx.runQuery(internal.billing.listPaymentMethodsInternal, { orgId: key.orgId as Id<"organizations">, customerEmail: email });
+  return jsonOk({ payment_methods: rows.filter((r) => r.livemode === (key.environment === "production")) }, 200, requestId);
+});
+
+export const createPaymentMethod = endpoint("POST /payment_methods", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  const provider = String(pick(body, "provider") ?? "");
+  const token = String(pick(body, "token") ?? "");
+  const email = optString(body, 254, "customer_email")?.toLowerCase();
+  if (!provider || !token || !email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new ApiError("validation_error", "provider, token and a valid customer_email are required.");
+  const r = await ctx.runAction(internal.billing.importPaymentMethodInternal, {
+    orgId: key.orgId as Id<"organizations">,
+    environment: key.environment,
+    providerId: provider,
+    token,
+    customerEmail: email,
+    brand: optString(body, 24, "brand"),
+    last4: optString(body, 4, "last4"),
+    expMonth: typeof body.exp_month === "number" ? body.exp_month : undefined,
+    expYear: typeof body.exp_year === "number" ? body.exp_year : undefined,
+  });
+  if (r.error || !r.methodId) throw new ApiError("validation_error", r.error ?? "Could not save the payment method.");
+  const rows = await ctx.runQuery(internal.billing.listPaymentMethodsInternal, { orgId: key.orgId as Id<"organizations">, customerEmail: email });
+  return jsonOk({ payment_method: rows.find((p) => p.id === r.methodId) ?? { id: r.methodId } }, 201, requestId);
+});
+
+export const paymentMethodAction = endpoint("POST /payment_methods/:id/revoke", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts[4] !== "revoke" || parts.length !== 5) throw new ApiError("not_found", "Unknown endpoint.");
+  const r = await ctx.runMutation(internal.billing.revokePaymentMethodInternal, { orgId: key.orgId as Id<"organizations">, methodId: parts[3], actor: key.prefix });
+  if (!r) throw new ApiError("not_found", "No such payment method in this organization.");
+  return jsonOk({ payment_method: r }, 200, requestId);
+});
+
+export const listPlans = endpoint("GET /plans", async (ctx, _request, key, requestId) =>
+  jsonOk({ plans: await ctx.runQuery(internal.billing.listPlansInternal, { orgId: key.orgId as Id<"organizations"> }) }, 200, requestId),
+);
+
+export const createPlan = endpoint("POST /plans", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  try {
+    const plan = await ctx.runMutation(internal.billing.createPlanInternal, {
+      orgId: key.orgId as Id<"organizations">,
+      name: String(pick(body, "name") ?? ""),
+      amountMinor: Number(pick(body, "amount")),
+      currency: String(pick(body, "currency") ?? "").toUpperCase(),
+      interval: String(pick(body, "interval") ?? "") as "day" | "week" | "month" | "year",
+      intervalCount: Number(pick(body, "interval_count") ?? 1),
+      trialDays: pick(body, "trial_days") === undefined ? undefined : Number(pick(body, "trial_days")),
+      actor: key.prefix,
+    });
+    return jsonOk({ plan }, 201, requestId);
+  } catch (err) {
+    return billingError(err);
+  }
+});
+
+export const listSubscriptions = endpoint("GET /subscriptions", async (ctx, request, key, requestId) => {
+  const limit = Math.min(Number(new URL(request.url).searchParams.get("limit") ?? 50) || 50, 200);
+  const rows = await ctx.runQuery(internal.billing.listSubscriptionsInternal, { orgId: key.orgId as Id<"organizations">, limit });
+  return jsonOk({ subscriptions: rows.filter((r) => r.livemode === (key.environment === "production")) }, 200, requestId);
+});
+
+export const createSubscription = endpoint("POST /subscriptions", async (ctx, request, key, requestId) => {
+  const body = await readJsonBody(request);
+  const orgId = key.orgId as Id<"organizations">;
+  try {
+    const sub = await ctx.runMutation(internal.billing.createSubscriptionInternal, {
+      orgId,
+      merchantId: await resolvePrimaryMerchant(ctx, orgId),
+      environment: key.environment,
+      planId: String(pick(body, "plan_id", "plan") ?? ""),
+      paymentMethodId: String(pick(body, "payment_method_id", "payment_method") ?? ""),
+      customerName: optString(body, 200, "customer_name"),
+      trialDays: pick(body, "trial_days") === undefined ? undefined : Number(pick(body, "trial_days")),
+      metadata: sanitizeMetadata(pick(body, "metadata")),
+      actor: key.prefix,
+    });
+    return jsonOk({ subscription: sub }, 201, requestId);
+  } catch (err) {
+    return billingError(err);
+  }
+});
+
+export const getSubscription = endpoint("GET /subscriptions/:id", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts.length !== 4) throw new ApiError("not_found", "Unknown endpoint.");
+  const s = await ctx.runQuery(internal.billing.getSubscriptionInternal, { orgId: key.orgId as Id<"organizations">, subscriptionId: parts[3] });
+  if (!s) throw new ApiError("not_found", "No such subscription in this organization.");
+  return jsonOk({ subscription: s }, 200, requestId);
+});
+
+export const subscriptionAction = endpoint("POST /subscriptions/:id/cancel", async (ctx, request, key, requestId) => {
+  const parts = new URL(request.url).pathname.split("/").filter(Boolean);
+  if (parts[4] !== "cancel" || parts.length !== 5) throw new ApiError("not_found", "Unknown endpoint.");
+  const body = await readJsonBody(request).catch(() => ({}) as Record<string, unknown>);
+  try {
+    const s = await ctx.runMutation(internal.billing.cancelSubscriptionInternal, { orgId: key.orgId as Id<"organizations">, subscriptionId: parts[3], atPeriodEnd: pick(body, "at_period_end") === true, actor: key.prefix });
+    return jsonOk({ subscription: s }, 200, requestId);
+  } catch (err) {
+    return billingError(err);
+  }
+});
+
 /** Who is calling: key prefix, environment, scope and the client address USOPGRID sees (for IP allowlists). */
 export const whoami = endpoint("GET /whoami", async (_ctx, _request, key, requestId) =>
   jsonOk({ key: key.prefix, environment: key.environment, scope: key.scope, client_ip: key.clientIp }, 200, requestId),

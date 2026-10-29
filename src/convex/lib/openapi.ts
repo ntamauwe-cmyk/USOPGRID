@@ -110,6 +110,21 @@ export function buildOpenApiSpec(serverUrl: string) {
         post: { tags: ["Payouts"], operationId: "createPayout", summary: "Pay out to a verified beneficiary", description: "When the organization's two-person approval policy applies, no money moves: the response is 202 with an approval id, and the payout runs once a second team member approves it in the dashboard.", parameters: [idem], responses: { "201": ok({ type: "object" }), "202": ok({ type: "object" }), ...errors } },
         get: { tags: ["Payouts"], operationId: "listPayouts", summary: "List payouts", responses: { "200": ok({ type: "object" }), ...errors } },
       },
+      "/payment_methods": {
+        get: { tags: ["Recurring billing"], operationId: "listPaymentMethods", summary: "Saved payment methods (filter with ?customer_email=)", responses: { "200": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Recurring billing"], operationId: "importPaymentMethod", summary: "Save a reusable token obtained through a provider's own SDK (provider, token, customer_email; optional brand, last4, exp_month, exp_year). Card numbers are never accepted.", responses: { "201": ok({ type: "object" }), ...errors } },
+      },
+      "/payment_methods/{id}/revoke": { post: { tags: ["Recurring billing"], operationId: "revokePaymentMethod", summary: "Destroy a saved payment method; it can never be charged again", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
+      "/plans": {
+        get: { tags: ["Recurring billing"], operationId: "listPlans", summary: "Billing plans", responses: { "200": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Recurring billing"], operationId: "createPlan", summary: "Create a plan (name, amount, currency, interval day|week|month|year, interval_count, trial_days)", responses: { "201": ok({ type: "object" }), ...errors } },
+      },
+      "/subscriptions": {
+        get: { tags: ["Recurring billing"], operationId: "listSubscriptions", summary: "Subscriptions", responses: { "200": ok({ type: "object" }), ...errors } },
+        post: { tags: ["Recurring billing"], operationId: "createSubscription", summary: "Subscribe a customer (plan_id, payment_method_id, optional trial_days, metadata). Renewals are charged at the provider that issued the saved method; failed renewals retry on days 1, 3, 5 and 7 when the failure can recover.", responses: { "201": ok({ type: "object" }), ...errors } },
+      },
+      "/subscriptions/{id}": { get: { tags: ["Recurring billing"], operationId: "getSubscription", summary: "A subscription with its invoices", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
+      "/subscriptions/{id}/cancel": { post: { tags: ["Recurring billing"], operationId: "cancelSubscription", summary: "Cancel now, or at the end of the current period with at_period_end: true", parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }], responses: { "200": ok({ type: "object" }), ...errors } } },
       "/customers": { get: { tags: ["Customers"], operationId: "listCustomers", summary: "Customers built from payment activity", responses: { "200": ok({ type: "object" }), ...errors } } },
       "/reference": { get: { tags: ["Reference"], operationId: "referenceData", security: [], summary: "ISO currencies, countries, methods and states", responses: { "200": ok({ type: "object" }) } } },
       "/whoami": { get: { tags: ["Reference"], operationId: "whoami", summary: "The calling key's environment, scope and the client IP address USOPGRID sees (use it before enabling an IP allowlist)", responses: { "200": ok({ type: "object" }), ...errors } } },

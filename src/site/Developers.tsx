@@ -202,7 +202,7 @@ Authorization: Bearer sk_live_Q2m...      # production`}</Code>
 X-USOPGRID-Event: payment.successful
 X-USOPGRID-Event-Id: evt_8Jd...      # de-duplicate on this
 X-USOPGRID-Delivery-Attempt: 1`}</Code>
-              <p>Events: <code>payment.successful</code>, <code>payment.pending</code>, <code>payment.requires_action</code>, <code>payment.declined</code>, <code>payment.failed</code>, <code>payment.expired</code>, <code>payment.refunded</code>, <code>refund.pending</code>, <code>refund.failed</code>, <code>payment.reconciliation_exception</code>, or <code>*</code> for all.</p>
+              <p>Events: <code>payment.successful</code>, <code>payment.pending</code>, <code>payment.requires_action</code>, <code>payment.declined</code>, <code>payment.failed</code>, <code>payment.expired</code>, <code>payment.refunded</code>, <code>refund.pending</code>, <code>refund.failed</code>, <code>payment.reconciliation_exception</code>, <code>payment_method.saved</code>, <code>subscription.created</code>, <code>subscription.renewed</code>, <code>subscription.past_due</code>, <code>subscription.unpaid</code>, <code>subscription.canceled</code>, <code>invoice.paid</code>, <code>invoice.payment_failed</code>, or <code>*</code> for all.</p>
               <h3>Verify the signature</h3>
               <Code>{`// Node.js
 import crypto from "node:crypto";

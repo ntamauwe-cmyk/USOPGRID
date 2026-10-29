@@ -49,7 +49,7 @@ function makeSandbox(id: string, displayName: string, isBackup: boolean): Provid
     countries: "global",
     currencies: "all",
     methods: PAYMENT_METHODS,
-    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true },
+    operations: { charge: true, status: true, refund: true, partialRefund: true, webhooks: true, settlementReports: true, payouts: true, recurring: true },
     pricing: isBackup
       ? { pctBps: 250, fixedMinor: 20, fixedCurrency: "USD", notes: "Simulated pricing (backup)" }
       : { pctBps: 200, fixedMinor: 25, fixedCurrency: "USD", notes: "Simulated pricing" },
@@ -88,6 +88,9 @@ function makeSandbox(id: string, displayName: string, isBackup: boolean): Provid
       if (!DECLINES[sim] && !["success", "failover"].includes(sim)) {
         return { status: "failed", failure: failure("invalid_payment_information", "sandbox_unknown_simulation", `Unknown simulate directive '${sim}'. Try one of: ${SANDBOX_SIMULATION_KEYS.join(", ")}.`, { safeToFailover: false }) };
       }
+      if (req.recurring && !/^sbx_tok_[A-Za-z0-9]+$/.test(req.paymentToken ?? "")) {
+        return { status: "failed", failure: failure("invalid_payment_information", "sandbox_bad_token", "Saved payment method token is not recognised by the sandbox.", { safeToFailover: false }) };
+      }
       return {
         status: "successful",
         providerReference: ref(pref, req.transactionId),
@@ -95,6 +98,7 @@ function makeSandbox(id: string, displayName: string, isBackup: boolean): Provid
         providerFeeMinor: Math.round((req.amountMinor * descriptor.pricing.pctBps) / 10_000),
         reportedAmountMinor: req.amountMinor,
         reportedCurrency: req.currency,
+        reusableToken: req.savePaymentMethod && !req.recurring ? { token: `sbx_tok_${req.transactionId.replace(/[^A-Za-z0-9]/g, "").slice(-16)}`, brand: "visa", last4: "4242", expMonth: 12, expYear: 2030 } : undefined,
       };
     },
     async getStatus(_ctx, q) {

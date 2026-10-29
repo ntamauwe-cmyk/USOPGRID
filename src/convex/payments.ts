@@ -24,7 +24,8 @@ import { getAdapter, PAYMENT_METHODS } from "./providers/index";
 import type { ChargeResult, FailureInfo } from "./providers/types";
 import { failure as mkFailure } from "./providers/types";
 import { canTransition, resolveProviderOutcome, IN_FLIGHT_STATES, type TxState } from "./orchestration/states";
-import { route } from "./orchestration/router";
+import { route, DEFAULT_STRATEGY, type RoutingDecision } from "./orchestration/router";
+import { savePaymentMethodFromAction } from "./billing";
 import { executeChain, type AttemptRecord, type ChainStep } from "./orchestration/engine";
 import { evaluateJurisdiction, screenWatchlist, type ComplianceDecision } from "./orchestration/compliance";
 import { nextRecoveryAt, RECOVERY_DEADLINE_MS, REQUIRES_ACTION_TTL_MS } from "./orchestration/retry";
@@ -262,6 +263,8 @@ export const createTransactionInternal = internalMutation({
     idempotencyKey: v.optional(v.string()),
     requestId: v.optional(v.string()),
     actor: v.optional(v.string()),
+    savePaymentMethod: v.optional(v.boolean()),
+    invoiceId: v.optional(v.id("invoices")),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -289,6 +292,8 @@ export const createTransactionInternal = internalMutation({
       customerName: args.customerName,
       customerPhone: args.customerPhone,
       metadata: args.metadata,
+      savePaymentMethod: args.savePaymentMethod,
+      invoiceId: args.invoiceId,
       attemptCount: 0,
       failoverCount: 0,
       createdAt: now,
@@ -786,6 +791,13 @@ export const processPaymentInternal = internalAction({
     idempotencyKey: v.optional(v.string()),
     requestId: v.optional(v.string()),
     actor: v.optional(v.string()),
+    /** Keep the payment method for future charges (subscriptions). */
+    savePaymentMethod: v.optional(v.boolean()),
+    /** Merchant-initiated charge of a saved token (renewal). Requires pinnedConnectionId. */
+    recurring: v.optional(v.boolean()),
+    /** Saved tokens only work at the provider that issued them: route there only. */
+    pinnedConnectionId: v.optional(v.string()),
+    invoiceId: v.optional(v.id("invoices")),
   },
   handler: async (ctx, args): Promise<ProcessResult> => {
     // ---- 1. Static validation (nothing persisted on failure) ----
@@ -823,6 +835,8 @@ export const processPaymentInternal = internalAction({
       idempotencyKey: args.idempotencyKey,
       requestId: args.requestId,
       actor: args.actor,
+      savePaymentMethod: args.savePaymentMethod,
+      invoiceId: args.invoiceId,
     });
 
     // ---- 3. Risk + compliance ----
@@ -871,7 +885,9 @@ export const processPaymentInternal = internalAction({
       return adapter ? [{ ...c, descriptor: adapter.descriptor }] : [];
     });
     const routingRequest = { country: args.country, currency: args.currency, method: args.paymentMethod, amountMinor: args.amountMinor, riskScore: risk.score };
-    const decisionR = route({ request: routingRequest, candidates, stats: rc.stats, circuits: rc.circuits, rules: rc.rules, strategy: rc.strategy, now: Date.now() });
+    const decisionR = args.pinnedConnectionId
+      ? pinnedDecision(args.pinnedConnectionId, candidates, rc)
+      : route({ request: routingRequest, candidates, stats: rc.stats, circuits: rc.circuits, rules: rc.rules, strategy: rc.strategy, now: Date.now() });
     const saved = await ctx.runMutation(internal.payments.saveRoutingDecisionInternal, {
       orgId: args.orgId,
       internalId,
@@ -897,6 +913,8 @@ export const processPaymentInternal = internalAction({
         returnUrl: args.returnUrl,
         description: args.description,
         metadata: args.metadata as Record<string, unknown> | undefined,
+        recurring: args.recurring,
+        savePaymentMethod: args.savePaymentMethod,
       },
       decisionR.chain,
       chainDeps(ctx, { orgId: args.orgId, internalId, environment: args.environment, currency: args.currency, amountMinor: args.amountMinor, country: args.country, paymentMethod: args.paymentMethod }),
@@ -918,9 +936,43 @@ export const processPaymentInternal = internalAction({
       nextAction: r?.nextAction,
       failure: outcome.failure,
     });
+    // A reusable token returned with a successful first payment becomes a saved payment method.
+    if (args.savePaymentMethod && r?.reusableToken && outcome.decisive && summary.status === "SUCCESSFUL" && args.customerEmail) {
+      try {
+        await savePaymentMethodFromAction(ctx, {
+          orgId: args.orgId,
+          environment: args.environment,
+          customerEmail: args.customerEmail,
+          providerId: outcome.decisive.providerId,
+          connectionId: outcome.decisive.connectionId,
+          token: r.reusableToken,
+          sourceTransactionId: transactionId,
+        });
+      } catch (err) {
+        console.error("[billing] could not save payment method", err instanceof Error ? err.message : err);
+      }
+    }
     return { kind: "done", transaction: summary };
   },
 });
+
+/** Saved tokens only work at the connection that issued them: no routing, no failover. */
+function pinnedDecision(connectionId: string, candidates: { providerId: string; connectionId: string; enabled: boolean }[], rc: RoutingContext): RoutingDecision {
+  const c = candidates.find((x) => x.connectionId === connectionId && x.enabled);
+  const circuit = rc.circuits[connectionId];
+  const open = circuit && circuit.state === "open";
+  return {
+    chain: c && !open ? [{ providerId: c.providerId, connectionId: c.connectionId }] : [],
+    evaluations: [],
+    matchedRules: [],
+    strategy: rc.strategy ?? DEFAULT_STRATEGY,
+    explanation: !c
+      ? "The saved payment method's provider connection is no longer available."
+      : open
+        ? "The saved payment method's provider is temporarily unavailable (circuit open); the charge will be retried."
+        : `Saved payment method: charged at ${c.providerId}, the provider that issued it.`,
+  };
+}
 
 function chainDeps(
   ctx: ActionCtx,

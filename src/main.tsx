@@ -47,6 +47,7 @@ const Customers = lazy(() => import("./pages/dashboard/Customers.tsx"));
 const PaymentLinks = lazy(() => import("./pages/dashboard/PaymentLinks.tsx"));
 const Payouts = lazy(() => import("./pages/dashboard/Payouts.tsx"));
 const Approvals = lazy(() => import("./pages/dashboard/Approvals.tsx"));
+const Billing = lazy(() => import("./pages/dashboard/Billing.tsx"));
 const Disputes = lazy(() => import("./pages/dashboard/Disputes.tsx"));
 const Checkout = lazy(() => import("./pages/Checkout.tsx"));
 const NotFound = lazy(() => import("./pages/NotFound.tsx"));
@@ -202,6 +203,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route path="payouts" element={<Payouts />} />
 
                 <Route path="approvals" element={<Approvals />} />
+                <Route path="billing" element={<Billing />} />
                 <Route path="disputes" element={<Disputes />} />
                 <Route path="developers" element={<Developers />} />
                 <Route path="webhooks" element={<Webhooks />} />

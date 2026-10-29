@@ -96,3 +96,41 @@ export function normaliseRules(input: readonly string[]): string[] {
   if (out.length > 50) throw new Error("At most 50 addresses or ranges per key.");
   return out;
 }
+
+const PRIVATE_V4 = ["0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.168.0.0/16", "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4"];
+const PRIVATE_V6 = ["::/128", "::1/128", "fc00::/7", "fe80::/10", "ff00::/8"];
+
+function inRanges(ip: string, ranges: string[]): boolean {
+  const a = parseIp(ip);
+  if (!a) return false;
+  for (const r of ranges) {
+    const [addr, bitsS] = r.split("/");
+    const n = parseIp(addr);
+    if (!n || n.v !== a.v) continue;
+    const max = a.v === 4 ? 32 : 128;
+    const bits = Number(bitsS);
+    const mask = bits === 0 ? 0n : ((1n << BigInt(bits)) - 1n) << BigInt(max - bits);
+    if ((a.n & mask) === (n.n & mask)) return true;
+  }
+  return false;
+}
+
+/**
+ * Server-side request forgery guard for user-supplied callback URLs: HTTPS,
+ * public hostnames only, no credentials, no private/loopback/link-local IPs.
+ */
+export function unsafeCallbackUrl(raw: string): string | null {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return "must be a valid absolute URL";
+  }
+  if (u.protocol !== "https:") return "must use HTTPS";
+  if (u.username || u.password) return "must not contain credentials";
+  const host = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || /\.(localhost|local|internal|lan|home|corp)$/.test(host) || !host.includes(".") && !host.includes(":")) return "must use a public host name";
+  if (parseIp(host) && (inRanges(host, PRIVATE_V4) || inRanges(host, PRIVATE_V6))) return "must not point to a private or internal address";
+  if (u.port && !["443", "8443"].includes(u.port)) return "must use port 443 or 8443";
+  return null;
+}

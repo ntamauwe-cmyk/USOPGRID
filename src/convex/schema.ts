@@ -236,6 +236,10 @@ export const transactions = defineTable({
   customerEmail: v.optional(v.string()),
   customerName: v.optional(v.string()),
   metadata: v.optional(v.any()),
+  /** Customer asked to keep this payment method for future charges. */
+  savePaymentMethod: v.optional(v.boolean()),
+  /** Set on subscription renewal charges. */
+  invoiceId: v.optional(v.id("invoices")),
   // Failure intelligence
   failureCategory: v.optional(v.string()),
   failureCode: v.optional(v.string()),
@@ -900,6 +904,90 @@ export const orgInvitations = defineTable({
   .index("by_org", ["orgId"]);
 
 // Enterprise sales enquiries from the public website.
+// Recurring billing --------------------------------------------------------
+// Saved payment methods: provider-issued reusable tokens (sealed), bound to
+// the connection that issued them. Never card numbers.
+export const paymentMethods = defineTable({
+  orgId: v.id("organizations"),
+  environment: v.union(v.literal("sandbox"), v.literal("production")),
+  methodId: v.string(),
+  customerEmail: v.string(),
+  providerId: v.string(),
+  connectionId: v.string(),
+  sealedToken: v.string(),
+  tokenHash: v.string(),
+  brand: v.optional(v.string()),
+  last4: v.optional(v.string()),
+  expMonth: v.optional(v.number()),
+  expYear: v.optional(v.number()),
+  status: v.union(v.literal("active"), v.literal("revoked")),
+  sourceTransactionId: v.optional(v.string()),
+  createdAt: v.number(),
+  lastUsedAt: v.optional(v.number()),
+})
+  .index("by_method_id", ["methodId"])
+  .index("by_org_customer", ["orgId", "customerEmail"])
+  .index("by_org_token", ["orgId", "tokenHash"]);
+
+export const plans = defineTable({
+  orgId: v.id("organizations"),
+  planId: v.string(),
+  name: v.string(),
+  amountMinor: v.number(),
+  currency: v.string(),
+  interval: v.union(v.literal("day"), v.literal("week"), v.literal("month"), v.literal("year")),
+  intervalCount: v.number(),
+  trialDays: v.optional(v.number()),
+  active: v.boolean(),
+  createdAt: v.number(),
+})
+  .index("by_plan_id", ["planId"])
+  .index("by_org", ["orgId"]);
+
+export const subscriptions = defineTable({
+  orgId: v.id("organizations"),
+  merchantId: v.id("merchants"),
+  environment: v.union(v.literal("sandbox"), v.literal("production")),
+  subscriptionId: v.string(),
+  planId: v.string(),
+  customerEmail: v.string(),
+  customerName: v.optional(v.string()),
+  paymentMethodId: v.string(),
+  status: v.union(v.literal("trialing"), v.literal("active"), v.literal("past_due"), v.literal("unpaid"), v.literal("canceled")),
+  currentPeriodStart: v.number(),
+  currentPeriodEnd: v.number(),
+  anchorDay: v.number(),
+  nextChargeAt: v.number(),
+  failedAttempts: v.number(),
+  cancelAtPeriodEnd: v.boolean(),
+  canceledAt: v.optional(v.number()),
+  metadata: v.optional(v.any()),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_subscription_id", ["subscriptionId"])
+  .index("by_org_created", ["orgId", "createdAt"])
+  .index("by_status_next", ["status", "nextChargeAt"]);
+
+export const invoices = defineTable({
+  orgId: v.id("organizations"),
+  invoiceId: v.string(),
+  subscriptionId: v.string(),
+  periodStart: v.number(),
+  periodEnd: v.number(),
+  amountMinor: v.number(),
+  currency: v.string(),
+  status: v.union(v.literal("open"), v.literal("processing"), v.literal("paid"), v.literal("failed"), v.literal("void")),
+  attempts: v.number(),
+  transactionId: v.optional(v.string()),
+  lastError: v.optional(v.string()),
+  createdAt: v.number(),
+  paidAt: v.optional(v.number()),
+})
+  .index("by_invoice_id", ["invoiceId"])
+  .index("by_subscription_period", ["subscriptionId", "periodStart"])
+  .index("by_status", ["status"]);
+
 // Bulk payouts: one uploaded file, many payouts.
 export const payoutBatches = defineTable({
   orgId: v.id("organizations"),
@@ -1086,6 +1174,10 @@ const schema = defineSchema(
     approvalRequests,
     payoutBatches,
     payoutBatchItems,
+    paymentMethods,
+    plans,
+    subscriptions,
+    invoices,
   },
   {
     schemaValidation: false,
