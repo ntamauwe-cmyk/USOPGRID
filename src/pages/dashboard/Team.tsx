@@ -163,7 +163,7 @@ export default function Team() {
                     <td className="px-3 py-2">{label}</td>
                     {roles.map((r) => (
                       <td key={r.id} className="px-3 py-2 text-center">
-                        {r.permissions.includes(p) ? <Check className="mx-auto size-4 text-emerald-600" aria-label="Allowed" /> : <span className="sr-only">Not allowed</span>}
+                        {r.permissions.includes(p) ? <Check className="mx-auto size-4 text-status-success" aria-label="Allowed" /> : <span className="sr-only">Not allowed</span>}
                       </td>
                     ))}
                   </tr>

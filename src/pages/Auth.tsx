@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/input-otp";
 
 import { useAuth } from "@/hooks/use-auth";
-import { UsopgridMark, USOPGRID_TAGLINE } from "@/components/brand";
+import { UsopgridLogo, USOPGRID_COMPANY, USOPGRID_DESCRIPTOR, USOPGRID_TAGLINE } from "@/components/brand";
 import { ArrowRight, Loader2, Mail, UserX } from "lucide-react";
 import { Suspense, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
@@ -107,24 +107,34 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
   };
 
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="flex min-h-screen flex-col bg-background lg:flex-row">
+      <aside className="flex flex-col justify-between gap-10 border-b-2 border-gold bg-navy px-6 py-5 text-ivory lg:w-[42%] lg:border-b-0 lg:border-r-2 lg:px-14 lg:py-14">
+        <button type="button" onClick={() => navigate("/")} aria-label="USOPGRID home" className="self-start">
+          <UsopgridLogo tone="onDark" markClassName="size-9" wordClassName="text-[21px]" />
+        </button>
+        <div className="hidden max-w-md lg:block">
+          <p className="font-display text-4xl font-semibold leading-tight text-ivory">{USOPGRID_TAGLINE}</p>
+          <div className="my-6 h-px w-16 bg-gold" />
+          <p className="text-xs font-medium uppercase tracking-[0.18em] text-champagne">{USOPGRID_DESCRIPTOR}</p>
+          <ul className="mt-8 space-y-3 text-sm text-[#C6CAD3]">
+            <li>One account for every provider, currency and market you connect.</li>
+            <li>Every payment routed, recovered and reconciled to the last unit.</li>
+            <li>Multi-factor authentication and full audit trails as standard.</li>
+          </ul>
+        </div>
+        <p className="hidden text-xs text-[#C6CAD3]/70 lg:block">© {USOPGRID_COMPANY}</p>
+      </aside>
 
-      
       {/* Auth Content */}
-      <div className="flex-1 flex items-center justify-center">
-        <div className="flex items-center justify-center h-full flex-col">
-        <Card className="min-w-[350px] pb-0 border shadow-md">
+      <div className="flex flex-1 items-center justify-center px-4 py-10">
+        <div className="flex w-full max-w-[420px] flex-col">
+        <Card className="w-full gap-0 rounded-md border pb-0 shadow-none">
           {step === "signIn" ? (
             <>
-              <CardHeader className="text-center">
-              <div className="flex justify-center">
-                    <button type="button" onClick={() => navigate("/")} aria-label="USOPGRID home" className="mb-4 mt-4">
-                      <UsopgridMark className="size-16" />
-                    </button>
-                  </div>
-                <CardTitle className="text-xl">Sign in to USOPGRID</CardTitle>
-                <CardDescription>{USOPGRID_TAGLINE}</CardDescription>
-                <CardDescription>
+              <CardHeader className="pt-6 text-left">
+                <p className="pt-2 text-[11px] font-medium uppercase tracking-[0.16em] text-gold-ink">Secure sign-in</p>
+                <CardTitle className="font-display text-2xl font-semibold text-heading">Sign in to USOPGRID</CardTitle>
+                <CardDescription className="pb-2">
                   Enter your work email. We'll send a one-time code.
                 </CardDescription>
               </CardHeader>
@@ -157,7 +167,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                     </Button>
                   </div>
                   {error && (
-                    <p className="mt-2 text-sm text-red-500">{error}</p>
+                    <p className="mt-2 text-sm text-status-failed">{error}</p>
                   )}
                   
                   <div className="mt-4">
@@ -188,8 +198,8 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
             </>
           ) : (
             <>
-              <CardHeader className="text-center mt-4">
-                <CardTitle>Check your email</CardTitle>
+              <CardHeader className="pt-6 text-left">
+                <CardTitle className="font-display text-2xl font-semibold text-heading">Check your email</CardTitle>
                 <CardDescription>
                   We've sent a code to {step.email}
                 </CardDescription>
@@ -223,7 +233,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
                     </InputOTP>
                   </div>
                   {error && (
-                    <p className="mt-2 text-sm text-red-500 text-center">
+                    <p className="mt-2 text-sm text-status-failed text-center">
                       {error}
                     </p>
                   )}
@@ -270,7 +280,7 @@ function Auth({ redirectAfterAuth }: AuthProps = {}) {
             </>
           )}
 
-          <div className="py-4 px-6 text-xs text-center text-muted-foreground bg-muted border-t rounded-b-lg">
+          <div className="mt-6 rounded-b-md border-t bg-muted px-6 py-4 text-center text-xs text-muted-foreground">
             One-time codes expire after 15 minutes. USOPGRID staff will never ask you for one.
           </div>
         </Card>

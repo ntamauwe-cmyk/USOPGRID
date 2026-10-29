@@ -1,3 +1,4 @@
+import { UsopgridWordmark } from "@/components/brand";
 import { Link } from "react-router";
 import { SiteLayout, usePageMeta } from "./SiteLayout";
 import { RouteMap } from "./RouteMap";
@@ -54,14 +55,19 @@ export default function Home() {
       <section className="ug-dark ug-hero">
         <div className="ug-wrap ug-hero-grid">
           <div>
-            <h1 className="ug-h1">USOPGRID</h1>
+            <p className="ug-eyebrow">Enterprise Payment Infrastructure</p>
+            <h1 className="ug-h1 ug-hero-word">
+              <span className="sr-only">USOPGRID</span>
+              <UsopgridWordmark color="var(--ivory)" />
+            </h1>
+            <hr className="ug-rule" />
             <p className="ug-tag">Powering Every Payment Connection.</p>
             <p className="ug-lede">
               Enterprise payment infrastructure for connecting providers, orchestrating transactions, and delivering operational visibility through a
               unified platform.
             </p>
             <div className="ug-actions">
-              <Link to="/platform" className="ug-btn ug-btn-signal">
+              <Link to="/platform" className="ug-btn ug-btn-gold">
                 Explore the Platform
               </Link>
               <Link to="/developers" className="ug-btn ug-btn-ghost">
@@ -217,7 +223,7 @@ export default function Home() {
         <div className="ug-wrap ug-cta">
           <h2 className="ug-h2">Bring your providers. Keep every payment moving.</h2>
           <div className="ug-actions">
-            <Link to="/contact" className="ug-btn ug-btn-signal">
+            <Link to="/contact" className="ug-btn ug-btn-gold">
               Contact Enterprise Sales
             </Link>
             <Link to="/auth" className="ug-btn ug-btn-ghost">

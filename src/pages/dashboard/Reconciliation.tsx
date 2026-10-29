@@ -73,7 +73,7 @@ function UploadDialog({ providers, onClose }: { providers: { id: string; display
         </DialogHeader>
         {result ? (
           <div className="space-y-3" role="status">
-            <p className="flex items-center gap-2 font-medium"><CheckCircle2 className="size-5 text-emerald-600" /> Reconciliation complete</p>
+            <p className="flex items-center gap-2 font-medium"><CheckCircle2 className="size-5 text-status-success" /> Reconciliation complete</p>
             <p className="text-sm text-muted-foreground">{result.rows} lines read, {result.matched} matched, {result.exceptions} exceptions raised.</p>
             {result.parseErrors.length > 0 && (
               <details className="text-sm">
@@ -208,7 +208,7 @@ export default function Reconciliation() {
                     <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">{new Date(x.createdAt).toLocaleDateString()}</td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{TYPE_LABELS[x.type] ?? x.type}</div>
-                      <div className={x.severity === "high" ? "text-xs text-red-700" : "text-xs text-muted-foreground"}>{x.severity} severity</div>
+                      <div className={x.severity === "high" ? "text-xs text-status-failed" : "text-xs text-muted-foreground"}>{x.severity} severity</div>
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">
                       {x.transactionId ? <a className="text-primary hover:underline" href={`/dashboard/transactions/${x.transactionId}`}>{x.transactionId}</a> : "—"}
@@ -249,7 +249,7 @@ export default function Reconciliation() {
                     <td className="px-4 py-2.5 text-muted-foreground">{r.periodStart ? new Date(r.periodStart).toLocaleDateString() : "—"} to {r.periodEnd ? new Date(r.periodEnd).toLocaleDateString() : "—"}</td>
                     <td className="px-4 py-2.5 tabular-nums">{r.rows}</td>
                     <td className="px-4 py-2.5 tabular-nums">{r.matched}</td>
-                    <td className={r.exceptions ? "px-4 py-2.5 tabular-nums text-red-700" : "px-4 py-2.5 tabular-nums"}>{r.exceptions}</td>
+                    <td className={r.exceptions ? "px-4 py-2.5 tabular-nums text-status-failed" : "px-4 py-2.5 tabular-nums"}>{r.exceptions}</td>
                     <td className="px-4 py-2.5"><StatusPill status={r.status === "completed" ? "SETTLED" : "FAILED"} /></td>
                   </tr>
                 ))}

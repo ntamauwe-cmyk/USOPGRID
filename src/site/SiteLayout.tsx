@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, NavLink, useLocation } from "react-router";
-import { UsopgridMark, USOPGRID_COMPANY } from "@/components/brand";
+import { UsopgridLogo, USOPGRID_COMPANY } from "@/components/brand";
 import "./site.css";
 
 const NAV = [
@@ -46,8 +46,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
       <header className="ug-header">
         <div className="ug-wrap ug-header-in">
           <Link to="/" className="ug-brand" aria-label="USOPGRID home">
-            <UsopgridMark className="ug-brand-mark" tone="onDark" />
-            <span className="ug-brand-word">USOPGRID</span>
+            <UsopgridLogo tone="onDark" markClassName="ug-brand-mark" wordClassName="ug-brand-word" />
           </Link>
           <nav className="ug-nav" aria-label="Main">
             {NAV.map((n) => (
@@ -57,10 +56,10 @@ export function SiteLayout({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div className="ug-header-cta">
-            <Link to="/auth" className="ug-btn ug-btn-quiet ug-btn-sm" style={{ color: "#fff" }}>
+            <Link to="/auth" className="ug-btn ug-btn-quiet ug-btn-sm ug-on-dark">
               Sign in
             </Link>
-            <Link to="/contact" className="ug-btn ug-btn-signal ug-btn-sm">
+            <Link to="/contact" className="ug-btn ug-btn-gold ug-btn-sm">
               Contact sales
             </Link>
           </div>
@@ -85,8 +84,7 @@ export function SiteLayout({ children }: { children: ReactNode }) {
           <div className="ug-foot-grid">
             <div>
               <Link to="/" className="ug-brand" aria-label="USOPGRID home">
-                <UsopgridMark className="ug-brand-mark" tone="onDark" />
-                <span className="ug-brand-word">USOPGRID</span>
+                <UsopgridLogo tone="onDark" markClassName="ug-brand-mark" wordClassName="ug-brand-word" />
               </Link>
               <p style={{ marginTop: 14, maxWidth: "32ch" }}>Powering Every Payment Connection.</p>
             </div>

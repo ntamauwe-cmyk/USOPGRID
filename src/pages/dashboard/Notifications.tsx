@@ -6,7 +6,7 @@ import { PageHeader, EmptyState, LoadingRows } from "@/components/kit";
 import { cn } from "@/lib/utils";
 import { Bell } from "lucide-react";
 
-const DOT: Record<string, string> = { critical: "bg-red-600", warning: "bg-amber-500", info: "bg-blue-500" };
+const DOT: Record<string, string> = { critical: "bg-status-failed", warning: "bg-status-pending", info: "bg-status-info" };
 
 export default function Notifications() {
   const items = useQuery(api.notifications.list, { limit: 100 });

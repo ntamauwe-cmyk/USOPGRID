@@ -70,7 +70,7 @@ function Nav({ isPlatformAdmin, onNavigate }: { isPlatformAdmin: boolean; onNavi
     <nav className="flex-1 space-y-5 overflow-y-auto px-3 py-4" aria-label="Dashboard">
       {groups.map((g) => (
         <div key={g.label}>
-          <div className="px-3 pb-1.5 text-[11px] font-medium text-sidebar-foreground/55">{g.label}</div>
+          <div className="px-3 pb-1.5 text-[10.5px] font-medium uppercase tracking-[0.14em] text-sidebar-foreground/60">{g.label}</div>
           <div className="space-y-0.5">
             {g.items.map(({ to, label, icon: Icon, end }) => (
               <NavLink
@@ -81,11 +81,13 @@ function Nav({ isPlatformAdmin, onNavigate }: { isPlatformAdmin: boolean; onNavi
                 className={({ isActive }: { isActive: boolean }) =>
                   cn(
                     "flex items-center gap-3 rounded-md px-3 py-1.5 text-sm transition-colors",
-                    isActive ? "bg-sidebar-accent font-medium text-white" : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-white",
+                    isActive
+                      ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground shadow-[inset_2px_0_0_var(--sidebar-primary)]"
+                      : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
                   )
                 }
               >
-                <Icon className="size-4 opacity-80" />
+                <Icon className="size-4 opacity-80" strokeWidth={1.75} />
                 {label}
               </NavLink>
             ))}
@@ -101,8 +103,8 @@ function EnvironmentCard({ environment }: { environment: string }) {
   return (
     <div className="border-t border-sidebar-border p-3">
       <div className="rounded-md bg-sidebar-accent p-3">
-        <div className="flex items-center gap-2 text-xs font-medium text-white">
-          <span className={cn("size-2 rounded-full", live ? "bg-emerald-400" : "bg-amber-400")} />
+        <div className="flex items-center gap-2 text-xs font-medium text-sidebar-accent-foreground">
+          <span className={cn("size-2 rounded-full", live ? "bg-status-success" : "bg-status-pending")} />
           {live ? "Live environment" : "Sandbox environment"}
         </div>
         <p className="mt-1 text-[11px] leading-4 text-sidebar-foreground/75">
@@ -163,7 +165,7 @@ export default function DashboardLayout() {
         <a href="#dash-main" className="sr-only focus:not-sr-only focus:absolute focus:left-2 focus:top-2 focus:z-50 focus:rounded focus:bg-background focus:px-3 focus:py-2">Skip to content</a>
         <aside className="sticky top-0 hidden h-screen w-64 shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
           <div className="flex h-16 items-center border-b border-sidebar-border px-5">
-            <Link to="/" aria-label="USOPGRID home" className="text-white">
+            <Link to="/" aria-label="USOPGRID home">
               <UsopgridLogo tone="onDark" />
             </Link>
           </div>
@@ -173,7 +175,7 @@ export default function DashboardLayout() {
 
         <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
           <SheetContent side="left" className="flex w-72 flex-col bg-sidebar p-0 text-sidebar-foreground">
-            <SheetTitle className="flex h-16 items-center border-b border-sidebar-border px-5 text-white">
+            <SheetTitle className="flex h-16 items-center border-b border-sidebar-border px-5">
               <UsopgridLogo tone="onDark" />
             </SheetTitle>
             <Nav isPlatformAdmin={orgContext.isPlatformAdmin} onNavigate={() => setMobileOpen(false)} />
@@ -182,26 +184,26 @@ export default function DashboardLayout() {
         </Sheet>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b bg-background/95 px-4 backdrop-blur md:px-8">
+          <header className="sticky top-0 z-10 flex h-16 items-center justify-between gap-3 border-b bg-card px-4 md:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Open navigation" onClick={() => setMobileOpen(true)}>
                 <Menu className="size-5" />
               </Button>
               <span
                 className={cn(
-                  "rounded-full border px-2.5 py-0.5 text-xs font-medium",
-                  environment === "production" ? "border-emerald-600 text-emerald-700 dark:text-emerald-400" : "border-amber-500 text-amber-700 dark:text-amber-400",
+                  "rounded-full border px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-[0.12em]",
+                  environment === "production" ? "border-primary bg-primary text-primary-foreground" : "border-status-pending text-status-pending",
                 )}
               >
                 {environment === "production" ? "Live" : "Sandbox"}
               </span>
-              <span className="truncate text-sm font-semibold">{orgContext.org.name}</span>
+              <span className="truncate text-sm font-semibold text-heading">{orgContext.org.name}</span>
             </div>
             <div className="flex items-center gap-1">
               <Button variant="ghost" size="icon" asChild aria-label={`Notifications${unread ? `, ${unread} unread` : ""}`}>
                 <Link to="/dashboard/notifications" className="relative">
                   <Bell className="size-5" />
-                  {!!unread && <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-primary text-[10px] font-semibold text-primary-foreground">{unread > 9 ? "9+" : unread}</span>}
+                  {!!unread && <span className="absolute right-1.5 top-1.5 flex size-4 items-center justify-center rounded-full bg-gold text-[10px] font-semibold text-sidebar-primary-foreground">{unread > 9 ? "9+" : unread}</span>}
                 </Link>
               </Button>
               <DropdownMenu>
@@ -240,7 +242,7 @@ export default function DashboardLayout() {
             </div>
           </header>
           {suspended && (
-            <div role="alert" className="border-b border-orange-300 bg-orange-50 px-4 py-2 text-sm text-orange-900 md:px-8 dark:bg-orange-950 dark:text-orange-200">
+            <div role="alert" className="border-b border-status-attention bg-status-attention-bg px-4 py-2 text-sm text-status-attention md:px-8">
               This organization is {orgContext.org.status}. New payments are blocked. Contact support@usopgrid.com.
             </div>
           )}
