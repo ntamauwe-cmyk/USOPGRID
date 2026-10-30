@@ -70,7 +70,10 @@ const SIMULATION_LABELS: Record<string, string> = {
   failover: "Primary rail down, failover succeeds",
   provider_down: "Every rail down",
 };
-const SIMULATIONS = SANDBOX_SIMULATION_KEYS.map((k) => ({ value: k, label: SIMULATION_LABELS[k] ?? k }));
+const SIMULATIONS = [
+  { value: "none", label: "Connected test providers (no simulation)" },
+  ...SANDBOX_SIMULATION_KEYS.map((k) => ({ value: k, label: `Simulator: ${SIMULATION_LABELS[k] ?? k}` })),
+];
 
 function NewPaymentDialog({ defaultCurrency, environment }: { defaultCurrency: string; environment: string }) {
   const [open, setOpen] = useState(false);
@@ -101,7 +104,7 @@ function NewPaymentDialog({ defaultCurrency, environment }: { defaultCurrency: s
         customerEmail: (fd.get("email") as string) || undefined,
         customerName: (fd.get("name") as string) || undefined,
         paymentMethod: fd.get("method") as string,
-        simulate: environment === "sandbox" ? (fd.get("simulate") as string) : undefined,
+        simulate: environment === "sandbox" && fd.get("simulate") !== "none" ? (fd.get("simulate") as string) : undefined,
         description: (fd.get("description") as string) || undefined,
       });
       setOpen(false);

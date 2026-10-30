@@ -149,3 +149,19 @@ describe("access control", () => {
     expect((await api(t, "GET", "/payments", undefined, {}, TEST_KEY)).status).toBe(401);
   });
 });
+
+describe("sandbox simulation", () => {
+  test("a simulate request goes to the simulator even when real test providers are connected and preferred", async () => {
+    const { t, orgId } = await setup();
+    await t.run(async (ctx) => {
+      // A connected provider test account at high priority, plus a rule that would force it.
+      await ctx.db.insert("providerConnections", { orgId, connectionKey: "pc_fw_test", providerId: "flutterwave", environment: "sandbox", label: "Flutterwave test", enabled: true, priority: 100, status: "active", sealedCredentials: "v2.k.x.y", createdAt: Date.now(), updatedAt: Date.now() });
+      await ctx.db.insert("routingRules", { orgId, name: "Real test providers", enabled: true, order: 0, match: { currencies: ["NGN", "USD"] }, action: { type: "only", providers: ["flutterwave"] }, createdAt: Date.now(), updatedAt: Date.now() });
+    });
+    const r = await api(t, "POST", "/payments", { amount: 2500, currency: "USD", payment_method: "card", country: "US", customer: { email: "sim@example.com" }, metadata: { simulate: "success" } });
+    expect(r.status).toBe(201);
+    expect(r.data.payment.status).toBe("SUCCESSFUL");
+    expect(["sandbox", "sandbox_backup"]).toContain(r.data.payment.provider);
+  });
+});
+

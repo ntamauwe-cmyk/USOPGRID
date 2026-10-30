@@ -78,7 +78,7 @@ async function worker(deadline) {
     if (n % REPLAY_EVERY === 0 && issued.length > 0) {
       // Idempotency under load: same key must return the same payment.
       const [k, id] = issued[Math.floor(Math.random() * issued.length)];
-      const r = await pay(k, `${runId}-${k}`);
+      const r = await pay(k, k); // identical body: must replay the original response
       replayChecks++;
       if (r.body?.data?.payment?.id !== id) replayFailures++;
       continue;

@@ -21,7 +21,7 @@ import { postDoubleEntry, merchantAccountCode, providerClearingCode, feesAccount
 import { capShares, refundReversals, type SplitInput } from "./lib/splits";
 import { logAudit } from "./lib/audit";
 import { withIdempotency, fingerprint } from "./lib/idempotency";
-import { getAdapter, PAYMENT_METHODS } from "./providers/index";
+import { getAdapter, PAYMENT_METHODS, SANDBOX_PROVIDER_IDS } from "./providers/index";
 import type { ChargeResult, FailureInfo } from "./providers/types";
 import { failure as mkFailure } from "./providers/types";
 import { canTransition, resolveProviderOutcome, IN_FLIGHT_STATES, type TxState } from "./orchestration/states";
@@ -1032,14 +1032,19 @@ export const processPaymentInternal = internalAction({
 
     // ---- 4. Route ----
     const rc: RoutingContext = await ctx.runQuery(internal.connections.routingContextInternal, { orgId: args.orgId, environment: args.environment });
+    // A sandbox request that asks for a simulated outcome goes to the
+    // simulator only: never to connected providers' test accounts, and not
+    // subject to routing rules written for real providers.
+    const simulateOnly = args.environment === "sandbox" && typeof (args.metadata as Record<string, unknown> | undefined)?.simulate === "string";
     const candidates = rc.candidates.flatMap((c) => {
+      if (simulateOnly && !SANDBOX_PROVIDER_IDS.has(c.providerId)) return [];
       const adapter = getAdapter(c.providerId);
       return adapter ? [{ ...c, descriptor: adapter.descriptor }] : [];
     });
     const routingRequest = { country: args.country, currency: args.currency, method: args.paymentMethod, amountMinor: args.amountMinor, riskScore: risk.score };
     const decisionR = args.pinnedConnectionId
       ? pinnedDecision(args.pinnedConnectionId, candidates, rc)
-      : route({ request: routingRequest, candidates, stats: rc.stats, circuits: rc.circuits, rules: rc.rules, strategy: rc.strategy, now: Date.now() });
+      : route({ request: routingRequest, candidates, stats: rc.stats, circuits: rc.circuits, rules: simulateOnly ? [] : rc.rules, strategy: rc.strategy, now: Date.now() });
     const saved = await ctx.runMutation(internal.payments.saveRoutingDecisionInternal, {
       orgId: args.orgId,
       internalId,
