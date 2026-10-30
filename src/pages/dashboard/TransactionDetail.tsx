@@ -186,6 +186,15 @@ export default function TransactionDetail() {
         }
       />
 
+      {t.status === "PENDING" && t.nextAction?.type === "redirect" && t.nextAction.url && /^https:\/\//.test(t.nextAction.url) && (
+        <Card className="mb-6 border-status-pending/40 bg-status-pending-bg">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4 text-sm">
+            <span>Waiting for the customer to complete payment on {t.provider}&apos;s page. The status updates automatically when {t.provider} confirms.</span>
+            <a className="font-medium text-heading underline underline-offset-4" href={t.nextAction.url} target="_blank" rel="noopener noreferrer">Open payment page</a>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Failure intelligence banner — explain, don't just report */}
       {t.status === "FAILED" && t.failureCategory && (
         <Card className="mb-6 border-destructive/40 bg-destructive/5">
