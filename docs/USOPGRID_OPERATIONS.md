@@ -75,3 +75,32 @@ lead. Forward them to paging (PagerDuty/Opsgenie/Slack) by adding a sink in
 Enable Convex daily backups; keep 30 days. Quarterly restore test into a
 staging deployment. The encryption key must be backed up separately; without it
 sealed credentials and MFA secrets cannot be recovered.
+
+## Load testing
+
+`scripts/loadtest.mjs` measures throughput, latency and correctness of the
+payments API under sustained concurrent load, and checks that idempotency
+holds under load (replayed keys return the original payment; 10 simultaneous
+identical requests create one payment). It only accepts **sandbox** keys.
+
+Run it from GitHub without installing anything: **Actions → Load test → Run
+workflow**, after adding two repository secrets (Settings → Secrets and
+variables → Actions):
+
+| Secret | Value |
+|---|---|
+| `USOPGRID_API_URL` | `https://<deployment>.convex.site/api/v1` |
+| `USOPGRID_LOADTEST_KEY` | a sandbox secret key created under Developers |
+
+Results appear in the run's summary and are kept as an artifact for 90 days.
+
+- Each key is limited to 120 requests a minute. To measure beyond that, raise
+  the test key's limit in **Operations console → API rate limits** and set it
+  back afterwards.
+- Traffic uses USD by default so it goes to the built-in simulator, not to
+  Paystack or Flutterwave test APIs. Do not add a routing rule covering USD
+  while testing.
+- Every request runs real backend functions and counts towards the Convex
+  plan's usage. Start small (60 s, 10 clients).
+- The burst rule in the risk engine may hold some payments for review under
+  heavy load from one organization. That is expected behaviour.

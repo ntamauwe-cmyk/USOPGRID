@@ -1,0 +1,48 @@
+name: Load test
+
+# Run by hand from GitHub: Actions → Load test → Run workflow.
+# Needs two repository secrets (Settings → Secrets and variables → Actions):
+#   USOPGRID_API_URL       https://<deployment>.convex.site/api/v1
+#   USOPGRID_LOADTEST_KEY  a SANDBOX secret key (sk_sandbox_...); live keys are refused
+on:
+  workflow_dispatch:
+    inputs:
+      duration:
+        description: "Seconds to run (10–900)"
+        default: "120"
+      concurrency:
+        description: "Simultaneous clients (1–200)"
+        default: "20"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loadtest
+  cancel-in-progress: false
+
+jobs:
+  loadtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run load test
+        env:
+          USOPGRID_API_URL: ${{ secrets.USOPGRID_API_URL }}
+          USOPGRID_LOADTEST_KEY: ${{ secrets.USOPGRID_LOADTEST_KEY }}
+          DURATION_S: ${{ inputs.duration }}
+          CONCURRENCY: ${{ inputs.concurrency }}
+          RESULT_FILE: loadtest-result.json
+        run: node scripts/loadtest.mjs
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loadtest-result
+          path: loadtest-result.json
+          if-no-files-found: ignore
+          retention-days: 90

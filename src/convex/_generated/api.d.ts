@@ -53,6 +53,7 @@ import type * as lib_recon from "../lib/recon.js";
 import type * as lib_risk from "../lib/risk.js";
 import type * as lib_splits from "../lib/splits.js";
 import type * as lib_sso from "../lib/sso.js";
+import type * as lib_status from "../lib/status.js";
 import type * as notifications from "../notifications.js";
 import type * as ops from "../ops.js";
 import type * as orchestration_circuit from "../orchestration/circuit.js";
@@ -92,6 +93,7 @@ import type * as services from "../services.js";
 import type * as servicesInternal from "../servicesInternal.js";
 import type * as settlements from "../settlements.js";
 import type * as signInOptions from "../signInOptions.js";
+import type * as status from "../status.js";
 import type * as users from "../users.js";
 import type * as webhooks from "../webhooks.js";
 
@@ -144,6 +146,7 @@ declare const fullApi: ApiFromModules<{
   "lib/risk": typeof lib_risk;
   "lib/splits": typeof lib_splits;
   "lib/sso": typeof lib_sso;
+  "lib/status": typeof lib_status;
   notifications: typeof notifications;
   ops: typeof ops;
   "orchestration/circuit": typeof orchestration_circuit;
@@ -183,6 +186,7 @@ declare const fullApi: ApiFromModules<{
   servicesInternal: typeof servicesInternal;
   settlements: typeof settlements;
   signInOptions: typeof signInOptions;
+  status: typeof status;
   users: typeof users;
   webhooks: typeof webhooks;
 }>;

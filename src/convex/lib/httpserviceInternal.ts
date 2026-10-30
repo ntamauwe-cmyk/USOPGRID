@@ -18,7 +18,7 @@ export const consumeRateLimitInternal = internalMutation({
     if (!key) return { ok: false, retryAfterMs: RATE_WINDOW_MS };
     const now = Date.now();
     const inWindow = !!key.rateWindowEnd && now < key.rateWindowEnd;
-    if (inWindow && (key.rateWindowCount ?? 0) >= RATE_LIMIT) {
+    if (inWindow && (key.rateWindowCount ?? 0) >= (key.rateLimitPerMinute ?? RATE_LIMIT)) {
       return { ok: false, retryAfterMs: Math.max(1, (key.rateWindowEnd ?? now) - now) };
     }
     if (inWindow) {

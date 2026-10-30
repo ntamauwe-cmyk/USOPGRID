@@ -68,6 +68,7 @@ export const apiKeyByHash = internalQuery({
       scope: key.scope,
       allowedIps: key.allowedIps,
       prefix: key.prefix,
+      rateLimitPerMinute: key.rateLimitPerMinute,
     };
   },
 });

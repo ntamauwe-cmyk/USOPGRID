@@ -838,7 +838,7 @@ export const recipientAction = endpoint("POST /recipients/:id/action", async (ct
 
 /** Who is calling: key prefix, environment, scope and the client address USOPGRID sees (for IP allowlists). */
 export const whoami = endpoint("GET /whoami", async (_ctx, _request, key, requestId) =>
-  jsonOk({ key: key.prefix, environment: key.environment, scope: key.scope, client_ip: key.clientIp }, 200, requestId),
+  jsonOk({ key: key.prefix, environment: key.environment, scope: key.scope, client_ip: key.clientIp, rate_limit_per_minute: key.rateLimitPerMinute }, 200, requestId),
 );
 
 export const health = httpAction(async (_ctx, request) =>
