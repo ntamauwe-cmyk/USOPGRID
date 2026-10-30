@@ -114,6 +114,40 @@ export const verifyCode = action({
   },
 });
 
+export const replaceRecoveryCodesInternal = internalMutation({
+  args: { userId: v.id("users"), hashes: v.array(v.string()) },
+  handler: async (ctx, a) => {
+    const row = await ctx.db.query("userMfa").withIndex("by_user", (q) => q.eq("userId", a.userId)).unique();
+    if (row?.status !== "enabled") throw new ConvexError("Turn on MFA first.");
+    await ctx.db.patch(row._id, { recoveryCodeHashes: a.hashes });
+    await ctx.db.insert("auditLogs", { actor: a.userId, action: "security.recovery_codes_regenerated", resource: "user", resourceId: a.userId, at: Date.now() });
+  },
+});
+
+/**
+ * Replace all recovery codes with a new set, shown once. Needs a current
+ * authenticator code (not a recovery code), so a stolen session or a used-up
+ * recovery code cannot mint new ones.
+ */
+export const regenerateRecoveryCodes = action({
+  args: { code: v.string() },
+  handler: async (ctx, { code }): Promise<{ recoveryCodes: string[] }> => {
+    const userId = await getAuthUserId(ctx);
+    if (!userId) throw new ConvexError("UNAUTHENTICATED");
+    const row = await ctx.runQuery(internal.security.mfaRowInternal, { userId });
+    if (row?.status !== "enabled") throw new ConvexError("Turn on MFA first.");
+    await limitAttempts(ctx, userId);
+    const secret = (requireEncryption(), await open(row.sealedSecret, `mfa:${userId}`));
+    const counter = await verifyTotp(secret, code.replace(/\s+/g, ""), Date.now());
+    if (counter === null) throw new ConvexError("Invalid code");
+    await ctx.runMutation(internal.security.recordVerificationInternal, { userId, counter, enable: false });
+    const recoveryCodes = Array.from({ length: 8 }, () => `${randomToken(5)}-${randomToken(5)}`.toLowerCase());
+    const hashes = await Promise.all(recoveryCodes.map((c) => sha256Hex(`usopgrid-recovery:${c}`)));
+    await ctx.runMutation(internal.security.replaceRecoveryCodesInternal, { userId, hashes });
+    return { recoveryCodes };
+  },
+});
+
 export const useRecoveryCodeInternal = internalMutation({
   args: { userId: v.id("users"), hash: v.string() },
   handler: async (ctx, a) => {

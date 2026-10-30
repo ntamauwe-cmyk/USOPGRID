@@ -10,6 +10,59 @@ import { useSensitive } from "@/components/StepUp";
 import { toast } from "sonner";
 import { ShieldCheck, Copy } from "lucide-react";
 
+function RecoveryCodes({ codes, onDone, title }: { codes: string[]; onDone: () => void; title: string }) {
+  const [saved, setSaved] = useState(false);
+  return (
+    <div className="space-y-3 rounded-md border border-gold/40 bg-card p-4" role="status">
+      <p className="font-medium">{title}</p>
+      <p className="text-sm text-muted-foreground">Save these recovery codes somewhere safe, away from your phone (a password manager note is ideal). Each one works once if you lose your authenticator. They will not be shown again.</p>
+      <ul className="grid grid-cols-2 gap-2 rounded-md bg-muted p-3 font-mono text-sm">{codes.map((c) => <li key={c}>{c}</li>)}</ul>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" className="size-4 accent-gold" checked={saved} onChange={(e) => setSaved(e.target.checked)} /> I have saved these codes</label>
+      <div className="flex flex-wrap gap-2">
+        <Button variant="outline" onClick={() => { void navigator.clipboard.writeText(codes.join("\n")); toast.success("Recovery codes copied"); }}><Copy className="size-4" /> Copy codes</Button>
+        <Button onClick={onDone} disabled={!saved}>Done</Button>
+      </div>
+    </div>
+  );
+}
+
+function NewRecoveryCodes({ onClose }: { onClose: () => void }) {
+  const regenerate = useAction(api.security.regenerateRecoveryCodes);
+  const [code, setCode] = useState("");
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  if (codes) return <RecoveryCodes codes={codes} onDone={onClose} title="New recovery codes. Your old ones no longer work." />;
+  return (
+    <form
+      className="space-y-3 rounded-md border p-4"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        setBusy(true);
+        setError(null);
+        try {
+          setCodes((await regenerate({ code })).recoveryCodes);
+        } catch (err) {
+          setError(errorMessage(err));
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <p className="text-sm">Enter the current 6-digit code from your authenticator app. This replaces all your recovery codes; the old ones stop working.</p>
+      <div className="max-w-[12rem] space-y-1.5">
+        <Label htmlFor="regen-code">Code</Label>
+        <Input id="regen-code" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
+      </div>
+      {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+        <Button type="submit" disabled={busy || code.length !== 6}>{busy ? "Checking…" : "Get new codes"}</Button>
+      </div>
+    </form>
+  );
+}
+
 function Enroll({ onDone }: { onDone: () => void }) {
   const begin = useAction(api.security.beginEnrollment);
   const verify = useAction(api.security.verifyCode);
@@ -19,19 +72,7 @@ function Enroll({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  if (codes) {
-    return (
-      <div className="space-y-3" role="status">
-        <p className="font-medium">Multi-factor authentication is on.</p>
-        <p className="text-sm text-muted-foreground">Save these recovery codes somewhere safe. Each works once if you lose your authenticator. They will not be shown again.</p>
-        <ul className="grid grid-cols-2 gap-2 rounded-md bg-muted p-3 font-mono text-sm">{codes.map((c) => <li key={c}>{c}</li>)}</ul>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => { void navigator.clipboard.writeText(codes.join("\n")); toast.success("Recovery codes copied"); }}><Copy className="size-4" /> Copy codes</Button>
-          <Button onClick={onDone}>I've saved them</Button>
-        </div>
-      </div>
-    );
-  }
+  if (codes) return <RecoveryCodes codes={codes} onDone={onDone} title="Multi-factor authentication is on." />;
 
   if (!setup) {
     return (
@@ -102,6 +143,7 @@ export default function Security() {
   const policy = useMutation(api.security.updateOrgPolicy);
   const sensitive = useSensitive();
   const [enrolling, setEnrolling] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
 
   if (status === undefined) return <LoadingRows rows={4} />;
 
@@ -119,9 +161,17 @@ export default function Security() {
         </div>
         {!status.encryptionConfigured ? (
           <p className="text-sm text-status-pending">MFA is unavailable until the platform encryption key is configured. Contact your administrator.</p>
+        ) : enrolling ? (
+          // Checked before mfaEnabled: the live status flips to "on" the moment
+          // the code is accepted, and the recovery codes must stay on screen.
+          <Enroll onDone={() => setEnrolling(false)} />
         ) : status.mfaEnabled ? (
+          regenerating ? (
+            <NewRecoveryCodes onClose={() => setRegenerating(false)} />
+          ) : (
           <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm text-muted-foreground">{status.recoveryCodesRemaining} recovery codes left.</span>
+            <span className={`text-sm ${status.recoveryCodesRemaining <= 2 ? "font-medium text-status-pending" : "text-muted-foreground"}`}>{status.recoveryCodesRemaining} recovery codes left.</span>
+            <Button variant="outline" onClick={() => setRegenerating(true)}>Get new recovery codes</Button>
             {!status.orgPolicy.requireMfaForSensitive && (
               <Button
                 variant="outline"
@@ -138,8 +188,7 @@ export default function Security() {
               </Button>
             )}
           </div>
-        ) : enrolling ? (
-          <Enroll onDone={() => setEnrolling(false)} />
+          )
         ) : (
           <Button onClick={() => setEnrolling(true)}>Turn on MFA</Button>
         )}
