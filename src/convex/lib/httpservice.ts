@@ -205,6 +205,7 @@ export interface AuthedKey {
   prefix: string;
   scope: "full" | "read_only";
   clientIp: string | null;
+  rateLimitPerMinute: number;
 }
 
 export async function authenticateRequest(
@@ -246,6 +247,7 @@ export async function authenticateRequest(
     mode: key.mode,
     prefix: key.prefix,
     scope: key.scope ?? "full",
+    rateLimitPerMinute: key.rateLimitPerMinute ?? 120,
     clientIp: ip,
   };
 }

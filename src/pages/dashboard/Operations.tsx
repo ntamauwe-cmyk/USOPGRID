@@ -283,6 +283,35 @@ function Audit() {
 
 type KeyReport = { activeKeyId: string; byKey: Record<string, number>; resealed: number; failed: number; skipped: number };
 
+function RateLimits() {
+  const setLimit = useMutation(api.ops.setApiKeyRateLimit);
+  const act = useAct();
+  const [prefix, setPrefix] = useState("");
+  const [limit, setLimit_] = useState("");
+  const [reason, setReason] = useState("");
+  return (
+    <div className="space-y-4 text-sm">
+      <p className="max-w-2xl text-muted-foreground">
+        Every API key may make 120 requests a minute. Raise it for an enterprise customer or a load-test key, or set it back to the default. Customers cannot change this themselves.
+      </p>
+      <form
+        className="grid max-w-xl gap-3 sm:grid-cols-[1fr_8rem]"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const perMinute = limit.trim() === "" ? null : Number(limit);
+          void act(() => setLimit({ keyPrefix: prefix, perMinute, reason }), perMinute === null ? "Back to the default 120 a minute" : `Limit set to ${perMinute} a minute`);
+        }}
+      >
+        <Input aria-label="Key prefix" placeholder="Key prefix, e.g. sk_sandbox_ab12cd" value={prefix} onChange={(e) => setPrefix(e.target.value)} className="font-mono" />
+        <Input aria-label="Requests per minute" inputMode="numeric" placeholder="per minute" value={limit} onChange={(e) => setLimit_(e.target.value.replace(/\D/g, ""))} />
+        <Input aria-label="Reason" placeholder="Reason (recorded in the audit log)" value={reason} onChange={(e) => setReason(e.target.value)} className="sm:col-span-2" />
+        <Button type="submit" disabled={!prefix || reason.trim().length < 5} className="sm:w-fit">Save limit</Button>
+      </form>
+      <p className="text-xs text-muted-foreground">Leave the limit empty to restore the default. Allowed range: 10 to 6,000 a minute.</p>
+    </div>
+  );
+}
+
 function Keys() {
   const status = useAction(api.keyRotation.status);
   const reseal = useAction(api.keyRotation.resealAll);
@@ -355,6 +384,7 @@ export default function Operations() {
           <TabsTrigger value="flags">Feature flags</TabsTrigger>
           <TabsTrigger value="audit">Alerts & audit</TabsTrigger>
           <TabsTrigger value="keys">Encryption keys</TabsTrigger>
+          <TabsTrigger value="limits">API rate limits</TabsTrigger>
         </TabsList>
         <TabsContent value="health" className="pt-4"><Health /></TabsContent>
         <TabsContent value="recovery" className="pt-4"><Recovery /></TabsContent>
@@ -364,6 +394,7 @@ export default function Operations() {
         <TabsContent value="flags" className="pt-4"><Flags /></TabsContent>
         <TabsContent value="audit" className="pt-4"><Audit /></TabsContent>
         <TabsContent value="keys" className="pt-4"><Keys /></TabsContent>
+        <TabsContent value="limits" className="pt-4"><RateLimits /></TabsContent>
       </Tabs>
     </div>
   );

@@ -202,6 +202,22 @@ export const setOrgStatus = mutation({
   },
 });
 
+/** Raise or lower one API key's rate limit (enterprise customers, load tests). Operators only. */
+export const setApiKeyRateLimit = mutation({
+  args: { keyPrefix: v.string(), perMinute: v.union(v.number(), v.null()), reason: v.string() },
+  handler: async (ctx, a) => {
+    const op = await requireOperatorStepUp(ctx);
+    if (a.reason.trim().length < 5) throw new ConvexError("A reason is required");
+    if (a.perMinute !== null && (!Number.isInteger(a.perMinute) || a.perMinute < 10 || a.perMinute > 6000)) throw new ConvexError("Limit must be a whole number from 10 to 6000 per minute");
+    const prefix = a.keyPrefix.trim();
+    const key = (await ctx.db.query("apiKeys").collect()).find((k) => k.prefix === prefix && k.status === "active");
+    if (!key) throw new ConvexError("No active key with that prefix");
+    await ctx.db.patch(key._id, { rateLimitPerMinute: a.perMinute ?? undefined });
+    await ctx.db.insert("auditLogs", { orgId: key.orgId, actor: `operator:${op.email}`, action: "ops.api_key_rate_limit_changed", resource: "api_key", resourceId: key.prefix, before: { perMinute: key.rateLimitPerMinute ?? 120 }, after: { perMinute: a.perMinute ?? 120, reason: a.reason }, at: Date.now() });
+    return { prefix: key.prefix, perMinute: a.perMinute ?? 120 };
+  },
+});
+
 export const platformAudit = query({
   args: {},
   handler: async (ctx) => {

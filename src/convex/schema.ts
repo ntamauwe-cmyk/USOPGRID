@@ -186,6 +186,8 @@ export const apiKeys = defineTable({
   allowedIps: v.optional(v.array(v.string())),
   lastUsedAt: v.optional(v.number()),
   // Per-key rate limiting window
+  /** Requests per minute for this key; default 120. Only platform operators can change it. */
+  rateLimitPerMinute: v.optional(v.number()),
   rateWindowCount: v.optional(v.number()),
   rateWindowEnd: v.optional(v.number()),
   createdAt: v.number(),
