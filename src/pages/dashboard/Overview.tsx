@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { toast } from "sonner";
 import { useQuery, useAction } from "convex/react";
 import { api } from "@/convex/_generated/api";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -93,7 +94,7 @@ function NewPaymentDialog({ defaultCurrency, environment }: { defaultCurrency: s
       return;
     }
     try {
-      await createPayment({
+      const result = await createPayment({
         amountMinor,
         currency,
         country: String(fd.get("country") ?? "").trim().toUpperCase() || undefined,
@@ -104,6 +105,16 @@ function NewPaymentDialog({ defaultCurrency, environment }: { defaultCurrency: s
         description: (fd.get("description") as string) || undefined,
       });
       setOpen(false);
+      // Real providers (e.g. Paystack, Flutterwave) take card details on their own page.
+      const url = result.nextAction?.type === "redirect" ? result.nextAction.url : undefined;
+      if (url && /^https:\/\//.test(url)) {
+        const opened = window.open(url, "_blank", "noopener,noreferrer");
+        toast.info(`Complete the payment on ${result.provider}'s page`, {
+          description: opened ? "It opened in a new tab." : "Your browser blocked the new tab.",
+          action: { label: "Open payment page", onClick: () => window.open(url, "_blank", "noopener,noreferrer") },
+          duration: 20_000,
+        });
+      }
     } catch (err) {
       setError(errorMessage(err, "Payment failed"));
     } finally {
