@@ -78,9 +78,20 @@ async function worker(deadline) {
     if (n % REPLAY_EVERY === 0 && issued.length > 0) {
       // Idempotency under load: same key must return the same payment.
       const [k, id] = issued[Math.floor(Math.random() * issued.length)];
-      const r = await pay(k, k); // identical body: must replay the original response
+      // Identical body: must replay the original response. A 429 means the
+      // key's rate limit turned the request away before it was looked at,
+      // so wait and ask again rather than count it as a failed replay.
+      let r = await pay(k, k);
+      for (let tries = 0; r.status === 429 && tries < 10; tries++) {
+        await new Promise((res) => setTimeout(res, 1000));
+        r = await pay(k, k);
+      }
+      if (r.status === 429) continue;
       replayChecks++;
-      if (r.body?.data?.payment?.id !== id) replayFailures++;
+      if (r.body?.data?.payment?.id !== id) {
+        replayFailures++;
+        bump(errors, `replay_${r.status}_${r.body?.error?.code ?? "mismatch"}`);
+      }
       continue;
     }
     const k = `${runId}-${n}`;
@@ -160,7 +171,7 @@ const md = [
   `| Idempotency replays under load | ${replayChecks - replayFailures}/${replayChecks} returned the original payment |`,
   `| 10 simultaneous identical requests | ${dup.distinctPayments} payment created (${dup.retryableConflicts} told to retry) |`,
   "",
-  "Notes: 429 means the key's rate limit was reached (raise it in the Operations console for load tests). Payments marked for review come from the risk engine's burst rule, which is working as designed. Latency includes the network between the test runner and the API.",
+  "Notes: 429 means the key's rate limit was reached; requests above it are turned away by design and count against neither speed nor correctness (raise the test key's limit in the Operations console to measure beyond it). Payments marked for review come from the risk engine's burst rule, which is working as designed. Latency includes the network between the test runner and the API.",
 ].join("\n");
 
 console.log(md);
