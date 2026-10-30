@@ -48,6 +48,7 @@ import type * as lib_ipallow from "../lib/ipallow.js";
 import type * as lib_keyring from "../lib/keyring.js";
 import type * as lib_ledger from "../lib/ledger.js";
 import type * as lib_openapi from "../lib/openapi.js";
+import type * as lib_ratelimit from "../lib/ratelimit.js";
 import type * as lib_rbac from "../lib/rbac.js";
 import type * as lib_recon from "../lib/recon.js";
 import type * as lib_risk from "../lib/risk.js";
@@ -141,6 +142,7 @@ declare const fullApi: ApiFromModules<{
   "lib/keyring": typeof lib_keyring;
   "lib/ledger": typeof lib_ledger;
   "lib/openapi": typeof lib_openapi;
+  "lib/ratelimit": typeof lib_ratelimit;
   "lib/rbac": typeof lib_rbac;
   "lib/recon": typeof lib_recon;
   "lib/risk": typeof lib_risk;

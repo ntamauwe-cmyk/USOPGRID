@@ -599,6 +599,14 @@ export const payouts = defineTable({
   .index("by_status_updated", ["status", "updatedAt"])
   .index("by_rail_reference", ["railReference"]);
 
+// Per-key rate-limit windows, spread over shards (lib/ratelimit).
+export const rateShards = defineTable({
+  apiKeyId: v.id("apiKeys"),
+  shard: v.number(),
+  count: v.number(),
+  windowEnd: v.number(),
+}).index("by_key_shard", ["apiKeyId", "shard"]);
+
 // Watermarks for background roll-ups (single writer per name).
 export const rollupCursors = defineTable({
   name: v.string(),
@@ -954,9 +962,12 @@ export const apiUsage = defineTable({
   errors4xx: v.number(),
   errors5xx: v.number(),
   byRoute: v.any(), // { "POST /api/v1/payments": n }
+  /** Rows are spread over shards per key and day; readers add them up. */
+  shard: v.optional(v.number()),
   updatedAt: v.number(),
 })
   .index("by_key_day", ["apiKeyId", "day"])
+  .index("by_key_day_shard", ["apiKeyId", "day", "shard"])
   .index("by_org_day", ["orgId", "day"]);
 
 // Team invitations — the invitee joins by signing in with the invited email.
@@ -1222,6 +1233,7 @@ const schema = defineSchema(
     recipients,
     statusSamples,
     rollupCursors,
+    rateShards,
     statusDays,
     disputes,
     disputeEvents,

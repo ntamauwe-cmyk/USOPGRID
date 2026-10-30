@@ -217,3 +217,34 @@ describe("load safety", () => {
     expect(await t.run((ctx) => ctx.db.query("paymentAttempts").collect())).toHaveLength(before.length);
   });
 });
+
+describe("API rate limits", () => {
+  test("the default limit is exact: the 121st request in a minute is refused", async () => {
+    const { t, keyId } = await setup();
+    for (let i = 0; i < 120; i++) {
+      const r = await t.mutation(internal.lib.httpserviceInternal.consumeRateLimitInternal, { apiKeyId: keyId });
+      expect(r.ok).toBe(true);
+    }
+    expect((await t.mutation(internal.lib.httpserviceInternal.consumeRateLimitInternal, { apiKeyId: keyId })).ok).toBe(false);
+    // The key record itself is never written by the limiter.
+    const key = await t.run((ctx) => ctx.db.get(keyId));
+    expect(key?.rateWindowCount).toBeUndefined();
+  });
+
+  test("a raised limit is spread over several counters and never exceeded", async () => {
+    const { t, keyId } = await setup();
+    let ok = 0;
+    for (let i = 0; i < 700; i++) if ((await t.mutation(internal.lib.httpserviceInternal.consumeRateLimitInternal, { apiKeyId: keyId, limit: 600 })).ok) ok++;
+    expect(ok).toBeLessThanOrEqual(600);
+    expect(ok).toBeGreaterThan(500); // uneven landing turns a few away early, not many
+    const shards = await t.run((ctx) => ctx.db.query("rateShards").collect());
+    expect(shards.length).toBeGreaterThan(1);
+  });
+
+  test("usage metering adds up across its rows", async () => {
+    const { t } = await setup();
+    for (let i = 0; i < 5; i++) await api(t, "GET", "/whoami");
+    const rows = await t.run((ctx) => ctx.db.query("apiUsage").collect());
+    expect(rows.reduce((n, r) => n + r.requests, 0)).toBe(5);
+  });
+});

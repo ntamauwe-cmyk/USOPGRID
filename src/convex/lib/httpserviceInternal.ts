@@ -4,35 +4,35 @@
 import { v } from "convex/values";
 import { internalMutation } from "../_generated/server";
 
-const RATE_LIMIT = 120;
-const RATE_WINDOW_MS = 60_000;
+import { DEFAULT_RATE_LIMIT, RATE_WINDOW_MS, USAGE_SHARDS, shardCount, shardLimit } from "./ratelimit";
 
-// Atomic per-key rate-limit consume: check + increment + lastUsedAt in ONE
-// mutation so Convex's OCC retry loop serializes access to the counter doc.
-// (A read-then-write split across separate query/mutation functions causes
-// conflict storms and spurious 500s under concurrent bursts.)
+const RATE_LIMIT = DEFAULT_RATE_LIMIT;
+
+// Per-key rate-limit consume. The limit comes from the authenticated key, so
+// this never reads or writes the key record itself; it touches one shard row
+// (see lib/ratelimit), so concurrent requests from a busy key rarely collide.
 export const consumeRateLimitInternal = internalMutation({
-  args: { apiKeyId: v.id("apiKeys") },
+  args: { apiKeyId: v.id("apiKeys"), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    const key = await ctx.db.get(args.apiKeyId);
-    if (!key) return { ok: false, retryAfterMs: RATE_WINDOW_MS };
+    const limit = args.limit ?? RATE_LIMIT;
+    const shards = shardCount(limit);
+    const shard = shards === 1 ? 0 : Math.floor(Math.random() * shards);
+    const cap = shardLimit(limit, shards, shard);
     const now = Date.now();
-    const inWindow = !!key.rateWindowEnd && now < key.rateWindowEnd;
-    if (inWindow && (key.rateWindowCount ?? 0) >= (key.rateLimitPerMinute ?? RATE_LIMIT)) {
-      return { ok: false, retryAfterMs: Math.max(1, (key.rateWindowEnd ?? now) - now) };
+    const row = await ctx.db
+      .query("rateShards")
+      .withIndex("by_key_shard", (q) => q.eq("apiKeyId", args.apiKeyId).eq("shard", shard))
+      .unique();
+    if (!row) {
+      await ctx.db.insert("rateShards", { apiKeyId: args.apiKeyId, shard, count: 1, windowEnd: now + RATE_WINDOW_MS });
+      return { ok: true, retryAfterMs: 0 };
     }
-    if (inWindow) {
-      await ctx.db.patch(args.apiKeyId, {
-        rateWindowCount: (key.rateWindowCount ?? 0) + 1,
-        lastUsedAt: now,
-      });
-    } else {
-      await ctx.db.patch(args.apiKeyId, {
-        rateWindowCount: 1,
-        rateWindowEnd: now + RATE_WINDOW_MS,
-        lastUsedAt: now,
-      });
+    if (row.windowEnd <= now) {
+      await ctx.db.patch(row._id, { count: 1, windowEnd: now + RATE_WINDOW_MS });
+      return { ok: true, retryAfterMs: 0 };
     }
+    if (row.count >= cap) return { ok: false, retryAfterMs: Math.max(1, row.windowEnd - now) };
+    await ctx.db.patch(row._id, { count: row.count + 1 });
     return { ok: true, retryAfterMs: 0 };
   },
 });
@@ -69,38 +69,32 @@ export const purgeBucketsInternal = internalMutation({
   },
 });
 
-/** Per-key daily usage metering (requests, 4xx, 5xx, per route). */
+/**
+ * Per-key daily usage metering (requests, 4xx, 5xx, per route), spread over
+ * a few rows per key and day so a busy key's requests do not all write one
+ * record; readers add the rows up. Also keeps the key's lastUsedAt, written
+ * at most once a minute.
+ */
 export const meterInternal = internalMutation({
   args: { apiKeyId: v.id("apiKeys"), orgId: v.id("organizations"), route: v.string(), status: v.number() },
   handler: async (ctx, a) => {
-    const day = new Date().toISOString().slice(0, 10);
+    const now = Date.now();
+    const day = new Date(now).toISOString().slice(0, 10);
+    const shard = Math.floor(Math.random() * USAGE_SHARDS);
     const row = await ctx.db
       .query("apiUsage")
-      .withIndex("by_key_day", (q) => q.eq("apiKeyId", a.apiKeyId).eq("day", day))
+      .withIndex("by_key_day_shard", (q) => q.eq("apiKeyId", a.apiKeyId).eq("day", day).eq("shard", shard))
       .unique();
     const e4 = a.status >= 400 && a.status < 500 ? 1 : 0;
     const e5 = a.status >= 500 ? 1 : 0;
     if (!row) {
-      await ctx.db.insert("apiUsage", {
-        orgId: a.orgId,
-        apiKeyId: a.apiKeyId,
-        day,
-        requests: 1,
-        errors4xx: e4,
-        errors5xx: e5,
-        byRoute: { [a.route]: 1 },
-        updatedAt: Date.now(),
-      });
-      return;
+      await ctx.db.insert("apiUsage", { orgId: a.orgId, apiKeyId: a.apiKeyId, day, shard, requests: 1, errors4xx: e4, errors5xx: e5, byRoute: { [a.route]: 1 }, updatedAt: now });
+    } else {
+      const byRoute = { ...(row.byRoute as Record<string, number>) };
+      byRoute[a.route] = (byRoute[a.route] ?? 0) + 1;
+      await ctx.db.patch(row._id, { requests: row.requests + 1, errors4xx: row.errors4xx + e4, errors5xx: row.errors5xx + e5, byRoute, updatedAt: now });
     }
-    const byRoute = { ...(row.byRoute as Record<string, number>) };
-    byRoute[a.route] = (byRoute[a.route] ?? 0) + 1;
-    await ctx.db.patch(row._id, {
-      requests: row.requests + 1,
-      errors4xx: row.errors4xx + e4,
-      errors5xx: row.errors5xx + e5,
-      byRoute,
-      updatedAt: Date.now(),
-    });
+    const key = await ctx.db.get(a.apiKeyId);
+    if (key && (key.lastUsedAt === undefined || now - key.lastUsedAt > 60_000)) await ctx.db.patch(a.apiKeyId, { lastUsedAt: now });
   },
 });

@@ -137,10 +137,11 @@ export function corsPreflight(): Response {
 // consumeRateLimitInternal); fail-open on limiter infrastructure errors so
 // an internal blip can never 500 genuine financial traffic — the provider
 // call and financial engine remain fully protected by their own guards.
-export async function checkRateLimit(ctx: ActionCtx, apiKeyId: string): Promise<void> {
+export async function checkRateLimit(ctx: ActionCtx, apiKeyId: string, limit?: number): Promise<void> {
   try {
     const result = (await ctx.runMutation(internal.lib.httpserviceInternal.consumeRateLimitInternal, {
       apiKeyId: apiKeyId as never,
+      limit,
     })) as { ok: boolean; retryAfterMs: number } | undefined;
     if (result && !result.ok) {
       throw new ApiError("rate_limited", "Rate limit exceeded. Retry shortly.", true, { retryAfterSec: Math.ceil(result.retryAfterMs / 1000) });
@@ -238,7 +239,7 @@ export async function authenticateRequest(
     throw new ApiError("authorization_error", "Live secret keys must only be used from your server, never from a browser. Rotate this key if it was embedded in a web page.");
   }
 
-  await checkRateLimit(ctx, key._id);
+  await checkRateLimit(ctx, key._id, key.rateLimitPerMinute);
 
   return {
     keyId: key._id,
