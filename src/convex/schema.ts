@@ -599,6 +599,12 @@ export const payouts = defineTable({
   .index("by_status_updated", ["status", "updatedAt"])
   .index("by_rail_reference", ["railReference"]);
 
+// Watermarks for background roll-ups (single writer per name).
+export const rollupCursors = defineTable({
+  name: v.string(),
+  at: v.number(),
+}).index("by_name", ["name"]);
+
 // ---------------------------------------------------------------------------
 // Public status page: a health sample every 5 minutes (kept 2 days) and a
 // daily rollup (kept 90 days). States only — never tenant volumes.
@@ -1215,6 +1221,7 @@ const schema = defineSchema(
     payouts,
     recipients,
     statusSamples,
+    rollupCursors,
     statusDays,
     disputes,
     disputeEvents,

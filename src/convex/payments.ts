@@ -772,6 +772,50 @@ async function openRecovery(
   });
 }
 
+/**
+ * Safety net: a payment still PROCESSING long after any action could still be
+ * running (Convex actions stop at 10 minutes) means its processing crashed
+ * after the provider may have been called. Never re-send it: mark the
+ * outcome unknown and open a status lookup with the provider it went to.
+ */
+export const STUCK_AFTER_MS = 11 * 60_000;
+export const sweepStuckInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now();
+    const stuck = await ctx.db
+      .query("transactions")
+      .withIndex("by_status_updated", (q) => q.eq("status", "PROCESSING").lt("updatedAt", now - STUCK_AFTER_MS))
+      .take(100);
+    let opened = 0;
+    for (const txn of stuck) {
+      const jobs = await ctx.db.query("recoveryJobs").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+      if (jobs.some((j) => j.status === "open")) continue;
+      const attempts = await ctx.db.query("paymentAttempts").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).collect();
+      const last = attempts.length > 0 ? attempts[attempts.length - 1] : undefined;
+      const decision = await ctx.db.query("routingDecisions").withIndex("by_transaction", (q) => q.eq("transactionId", txn._id)).first();
+      const step = last ? { providerId: last.providerId, connectionId: last.connectionId } : decision?.chain[0];
+      if (!step) continue;
+      await ctx.db.patch(txn._id, { outcomeUnknown: true, provider: txn.provider === "unassigned" ? step.providerId : txn.provider, connectionId: txn.connectionId ?? step.connectionId, updatedAt: now });
+      await recordEvent(ctx, txn._id, { type: "recovery.stuck_processing", actor: "system", data: { provider: step.providerId, note: "Processing was interrupted; confirming the outcome with the provider. The payment will not be re-sent." } });
+      await openRecovery(ctx, txn, "charge_status", step.providerId, step.connectionId);
+      opened++;
+    }
+    if (opened > 0) {
+      await notify(ctx, {
+        orgId: undefined,
+        kind: "stuck_payments",
+        severity: "warning",
+        title: `${opened} interrupted payment(s) sent to recovery`,
+        body: "Payments were left processing after an interruption. Their outcome is being confirmed with the provider; none were re-sent.",
+        link: "/dashboard/operations",
+        dedupeKey: `stuck:${Math.floor(now / 3_600_000)}`,
+      });
+    }
+    return opened;
+  },
+});
+
 /** Apply the executor's verdict for a fresh payment. */
 export const applyChainOutcomeInternal = internalMutation({
   args: {
@@ -1147,7 +1191,11 @@ function chainDeps(
         return r;
       }),
     onAttempt: async (rec: AttemptRecord, circuit: "success" | "provider_failure" | "neutral") => {
-      await ctx.runMutation(internal.connections.recordAttemptInternal, {
+      // The provider has already answered. Recording the attempt must never
+      // stop the outcome from being applied: retry once, then log and go on
+      // (the payment still records its provider and outcome; the stuck-payment
+      // sweeper is the last line of defence).
+      const record = () => ctx.runMutation(internal.connections.recordAttemptInternal, {
         orgId: t.orgId,
         transactionId: t.internalId,
         environment: t.environment,
@@ -1167,6 +1215,15 @@ function chainDeps(
         country: t.country,
         paymentMethod: t.paymentMethod,
       });
+      try {
+        await record();
+      } catch {
+        try {
+          await record();
+        } catch (err) {
+          console.error("[engine] could not record attempt; continuing", { transaction: t.internalId, provider: rec.providerId, error: err instanceof Error ? err.message : String(err) });
+        }
+      }
     },
   };
 }

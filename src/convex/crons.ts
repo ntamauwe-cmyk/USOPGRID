@@ -19,6 +19,12 @@ c.interval("refresh-fx-rates", { hours: 1 }, internal.fxrates.refreshRatesIntern
 c.interval("purge-idempotency-keys", { hours: 1 }, internal.lib.idempotency.purgeExpiredInternal, {});
 
 // Subscription renewals and retries of failed renewals.
+// Provider health counters, rolled up from attempts by one writer.
+c.interval("provider-health-rollup", { minutes: 1 }, internal.connections.healthRollupInternal, {});
+
+// Payments left processing by an interrupted action go to recovery.
+c.interval("sweep-stuck-payments", { minutes: 2 }, internal.payments.sweepStuckInternal, {});
+
 // Public status page sample (usopgrid.com/status).
 c.interval("status-sample", { minutes: 5 }, internal.status.recordSampleInternal, {});
 
