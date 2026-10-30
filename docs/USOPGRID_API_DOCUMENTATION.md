@@ -42,6 +42,7 @@ The key decides organization **and** environment. Publishable keys cannot call t
 | GET | `/whoami` | The calling key, its environment and scope, and the client IP USOPGRID sees |
 | GET | `/reference` | Public: currencies (with minor units), countries, methods, states |
 | GET | `/health` | Public liveness |
+| GET | `/status` | Public: platform component states, provider health from live traffic (when measurable), 90-day uptime. Feeds usopgrid.com/status |
 | GET | `/openapi.json` | Public spec |
 | GET/POST | `/checkout/:linkId` | Public payment-link checkout (link-scoped, org environment) |
 | POST | `/webhooks/providers/:connectionKey` | Inbound provider events (signature verified) |

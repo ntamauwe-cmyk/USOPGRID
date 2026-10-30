@@ -19,6 +19,9 @@ c.interval("refresh-fx-rates", { hours: 1 }, internal.fxrates.refreshRatesIntern
 c.interval("purge-idempotency-keys", { hours: 1 }, internal.lib.idempotency.purgeExpiredInternal, {});
 
 // Subscription renewals and retries of failed renewals.
+// Public status page sample (usopgrid.com/status).
+c.interval("status-sample", { minutes: 5 }, internal.status.recordSampleInternal, {});
+
 c.interval("billing-renewals", { minutes: 5 }, internal.billing.runDue, {});
 
 // Approval requests older than 72 h can no longer be approved.

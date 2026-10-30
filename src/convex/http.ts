@@ -2,6 +2,7 @@ import { httpRouter } from "convex/server";
 import { auth } from "./auth";
 import * as api from "./api";
 import { receive as providerWebhook } from "./providerWebhooks";
+import { publicStatus } from "./status";
 
 const http = httpRouter();
 
@@ -12,6 +13,7 @@ auth.addHttpRoutes(http);
 // ---------------------------------------------------------------------------
 const routes: [string, "GET" | "POST", Parameters<typeof http.route>[0]["handler"], boolean?][] = [
   ["/api/v1/health", "GET", api.health],
+  ["/api/v1/status", "GET", publicStatus],
   ["/api/v1/whoami", "GET", api.whoami],
   ["/api/v1/openapi.json", "GET", api.openapi],
   ["/api/v1/reference", "GET", api.referenceData],

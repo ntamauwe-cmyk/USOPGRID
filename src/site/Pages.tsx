@@ -350,45 +350,108 @@ export function Contact({ submit }: { submit?: Submitter }) {
 }
 
 // ---------------------------------------------------------------------------
+type CState = "operational" | "degraded" | "outage";
+interface StatusData {
+  status: CState;
+  updated_at: string | null;
+  components: { id: string; name: string; state: CState }[];
+  providers: { id: string; name: string; state: CState }[];
+  history: { day: string; uptime: number | null; worst: CState | null }[];
+  uptime_90d: number | null;
+  monitoring_since: string | null;
+}
+const STATE_LABEL: Record<CState, string> = { operational: "Operational", degraded: "Degraded performance", outage: "Outage" };
+const STATE_DOT: Record<CState, string> = { operational: "ok", degraded: "warn", outage: "down" };
+const pct = (n: number) => `${(Math.floor(n * 10000) / 100).toFixed(2)}%`;
+
 export function Status({ apiBase }: { apiBase?: string }) {
-  usePageMeta("System status", "Live status of the USOPGRID API.");
-  const [api, setApi] = useState<{ state: "checking" | "ok" | "down" | "unconfigured"; ms?: number; at?: number; version?: string }>({ state: apiBase ? "checking" : "unconfigured" });
+  usePageMeta("System status", "Live status and 90-day uptime of the USOPGRID payments platform.");
+  const [data, setData] = useState<StatusData | null>(null);
+  const [state, setState] = useState<"checking" | "ok" | "down" | "unconfigured">(apiBase ? "checking" : "unconfigured");
+  const [checkedAt, setCheckedAt] = useState<number | null>(null);
   useEffect(() => {
     if (!apiBase) return;
     let alive = true;
     const check = async () => {
-      const t = performance.now();
       try {
-        const r = await fetch(`${apiBase}/api/v1/health`, { cache: "no-store" });
-        const j = await r.json();
-        if (alive) setApi({ state: r.ok ? "ok" : "down", ms: Math.round(performance.now() - t), at: Date.now(), version: j?.data?.api_version });
+        const r = await fetch(`${apiBase}/api/v1/status`, { cache: "no-store" });
+        const j = (await r.json()) as { data?: StatusData };
+        if (!alive) return;
+        if (r.ok && j.data) {
+          setData(j.data);
+          setState("ok");
+        } else setState("down");
       } catch {
-        if (alive) setApi({ state: "down", at: Date.now() });
+        if (alive) setState("down");
       }
+      if (alive) setCheckedAt(Date.now());
     };
     void check();
-    const id = setInterval(check, 30_000);
+    const id = setInterval(check, 60_000);
     return () => {
       alive = false;
       clearInterval(id);
     };
   }, [apiBase]);
-  const label = { checking: "Checking", ok: "Operational", down: "Unreachable", unconfigured: "Not configured in this build" }[api.state];
-  const dot = { checking: "idle", ok: "ok", down: "down", unconfigured: "idle" }[api.state];
+
+  const overall: CState | null = state === "down" ? "outage" : data?.status ?? null;
+  const banner =
+    state === "unconfigured" ? "Status is not available in this build."
+    : state === "checking" ? "Checking…"
+    : overall === "operational" ? "All systems operational"
+    : overall === "degraded" ? "Some systems are degraded"
+    : "We cannot reach the USOPGRID platform";
+
   return (
     <SiteLayout>
-      <PageHead title="System status" lede="Checked live from your browser every 30 seconds." />
+      <PageHead title="System status" lede="Live health of the USOPGRID platform, refreshed every minute." />
       <section className="ug-section">
-        <div className="ug-wrap" style={{ maxWidth: 820 }}>
-          <div className="ug-status-row" aria-live="polite">
-            <div><span className={`ug-dot ${dot}`} />Payments API <span style={{ color: "var(--ink-3)", fontSize: 14 }}>/api/v1</span></div>
-            <strong>{label}{api.ms !== undefined ? `, ${api.ms} ms` : ""}</strong>
+        <div className="ug-wrap" style={{ maxWidth: 860 }}>
+          <div className={`ug-status-banner ${overall ? STATE_DOT[overall] : "idle"}`} role="status" aria-live="polite">
+            <span className={`ug-dot ${overall ? STATE_DOT[overall] : "idle"}`} />
+            <strong>{banner}</strong>
           </div>
-          <div className="ug-status-row"><div><span className={`ug-dot ${dot}`} />Dashboard</div><strong>{api.state === "ok" ? "Operational" : label}</strong></div>
-          <div className="ug-status-row"><div><span className={`ug-dot ${dot}`} />Webhook delivery</div><strong>{api.state === "ok" ? "Operational" : label}</strong></div>
-          <p style={{ marginTop: 20, fontSize: 14, color: "var(--ink-3)" }}>
-            {api.at ? `Last checked ${new Date(api.at).toLocaleTimeString()}. ` : ""}
-            {api.version ? `API version ${api.version}. ` : ""}Provider-level incidents appear in your dashboard notifications.
+
+          <h2 className="ug-status-h">Platform</h2>
+          <div className="ug-status-row"><div><span className="ug-dot ok" />Website</div><strong>Operational</strong></div>
+          {state === "down" && <div className="ug-status-row"><div><span className="ug-dot down" />Payments API</div><strong>Unreachable</strong></div>}
+          {data?.components.map((c) => (
+            <div key={c.id} className="ug-status-row"><div><span className={`ug-dot ${STATE_DOT[c.state]}`} />{c.name}</div><strong>{STATE_LABEL[c.state]}</strong></div>
+          ))}
+
+          {data && data.providers.length > 0 && (
+            <>
+              <h2 className="ug-status-h">Payment providers</h2>
+              {data.providers.map((p) => (
+                <div key={p.id} className="ug-status-row"><div><span className={`ug-dot ${STATE_DOT[p.state]}`} />{p.name}</div><strong>{STATE_LABEL[p.state]}</strong></div>
+              ))}
+              <p className="ug-status-note">Measured from live payments in the last 30 minutes. A provider appears here only when there is enough recent traffic to measure it. When a provider is degraded, USOPGRID routes payments to healthy ones automatically.</p>
+            </>
+          )}
+
+          {data && (
+            <>
+              <h2 className="ug-status-h">
+                Uptime, last 90 days{data.uptime_90d !== null && <span className="ug-status-uptime">{pct(data.uptime_90d)}</span>}
+              </h2>
+              <div className="ug-status-bars" role="img" aria-label="Daily uptime for the last 90 days">
+                {data.history.map((d) => {
+                  const cls = d.uptime === null ? "none" : d.uptime >= 0.999 ? "ok" : d.uptime >= 0.98 ? "warn" : "down";
+                  return <span key={d.day} className={`ug-bar ${cls}`} title={`${d.day}: ${d.uptime === null ? "not monitored" : `${pct(d.uptime)} uptime`}`} />;
+                })}
+              </div>
+              <div className="ug-status-axis"><span>90 days ago</span><span>Today</span></div>
+              <p className="ug-status-note">
+                Uptime counts the Payments API, webhook delivery and payment recovery, checked every 5 minutes; a missed check counts as downtime.
+                {data.monitoring_since ? ` Monitoring since ${new Date(data.monitoring_since).toLocaleDateString(undefined, { dateStyle: "long" })}.` : ""}
+              </p>
+            </>
+          )}
+
+          <p className="ug-status-note">
+            {checkedAt ? `Last checked ${new Date(checkedAt).toLocaleTimeString()}. ` : ""}
+            {data?.updated_at ? `Platform self-check at ${new Date(data.updated_at).toLocaleTimeString()}. ` : ""}
+            Incidents affecting your account also appear in your dashboard notifications.
           </p>
         </div>
       </section>

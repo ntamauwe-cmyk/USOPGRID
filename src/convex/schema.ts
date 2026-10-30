@@ -598,6 +598,29 @@ export const payouts = defineTable({
   .index("by_rail_reference", ["railReference"]);
 
 // ---------------------------------------------------------------------------
+// Public status page: a health sample every 5 minutes (kept 2 days) and a
+// daily rollup (kept 90 days). States only — never tenant volumes.
+// ---------------------------------------------------------------------------
+const componentState = v.union(v.literal("operational"), v.literal("degraded"), v.literal("outage"));
+export const statusSamples = defineTable({
+  at: v.number(),
+  ok: v.boolean(),
+  components: v.object({ api: componentState, webhooks: componentState, recovery: componentState }),
+  webhookOverdue: v.number(),
+  recoveryOverdue: v.number(),
+  providers: v.array(v.object({ providerId: v.string(), state: componentState })),
+}).index("by_at", ["at"]);
+
+export const statusDays = defineTable({
+  day: v.string(),
+  samples: v.number(),
+  okSamples: v.number(),
+  worst: componentState,
+  firstAt: v.number(),
+  lastAt: v.number(),
+}).index("by_day", ["day"]);
+
+// ---------------------------------------------------------------------------
 // Marketplace recipients — sellers or partners who receive shares of
 // payments. Each has its own ledger balance and is paid out to its own
 // beneficiary account.
@@ -776,7 +799,8 @@ export const paymentAttempts = defineTable({
 })
   .index("by_transaction", ["transactionId", "attempt"])
   .index("by_org_started", ["orgId", "startedAt"])
-  .index("by_connection_started", ["connectionId", "startedAt"]);
+  .index("by_connection_started", ["connectionId", "startedAt"])
+  .index("by_env_started", ["environment", "startedAt"]);
 
 // Circuit breaker state per connection (pure transitions in orchestration/circuit.ts).
 export const circuitStates = defineTable({
@@ -1188,6 +1212,8 @@ const schema = defineSchema(
     beneficiaries,
     payouts,
     recipients,
+    statusSamples,
+    statusDays,
     disputes,
     disputeEvents,
     providerHealth,
