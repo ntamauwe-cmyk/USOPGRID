@@ -165,3 +165,55 @@ describe("sandbox simulation", () => {
   });
 });
 
+
+describe("load safety", () => {
+  test("healthy payments do not write the shared circuit row; health counters roll up afterwards", async () => {
+    const { t } = await setup();
+    for (let i = 0; i < 3; i++) {
+      const r = await api(t, "POST", "/payments", { amount: 1000 + i, currency: "USD", payment_method: "card", country: "US", customer: { email: `h${i}@example.com` }, metadata: { simulate: "success" } });
+      expect(r.data.payment.status).toBe("SUCCESSFUL");
+    }
+    // No circuit row is written while the provider stays healthy.
+    expect(await t.run((ctx) => ctx.db.query("circuitStates").collect())).toHaveLength(0);
+    // Counters are filled by the single-writer roll-up, not by each payment.
+    expect(await t.run((ctx) => ctx.db.query("providerHealth").collect())).toHaveLength(0);
+    expect(await t.mutation(internal.connections.healthRollupInternal, {})).toBe(3);
+    const rows = await t.run((ctx) => ctx.db.query("providerHealth").collect());
+    expect(rows.reduce((n, r) => n + r.charges, 0)).toBe(3);
+    expect(rows.reduce((n, r) => n + r.successful, 0)).toBe(3);
+    // Running it again counts nothing twice.
+    expect(await t.mutation(internal.connections.healthRollupInternal, {})).toBe(0);
+  });
+
+  test("a payment left PROCESSING by an interrupted action goes to recovery, is never re-sent, and resolves", async () => {
+    const { t } = await setup();
+    const r = await api(t, "POST", "/payments", { amount: 4200, currency: "USD", payment_method: "card", country: "US", customer: { email: "stuck@example.com" }, metadata: { simulate: "success" } });
+    const id = r.data.payment.id as string;
+    const before = await t.run((ctx) => ctx.db.query("paymentAttempts").collect());
+    // Simulate a crash after the provider call: back to PROCESSING, 12 minutes ago, no recovery job.
+    await t.run(async (ctx) => {
+      const txn = (await ctx.db.query("transactions").withIndex("by_transaction_id", (q) => q.eq("transactionId", id)).unique())!;
+      await ctx.db.patch(txn._id, { status: "PROCESSING", updatedAt: Date.now() - 12 * 60_000 });
+      for (const j of await ctx.db.query("recoveryJobs").collect()) await ctx.db.delete(j._id);
+    });
+    // Still inside the window a live action could be running in: left alone.
+    await t.run(async (ctx) => {
+      const txn = (await ctx.db.query("transactions").withIndex("by_transaction_id", (q) => q.eq("transactionId", id)).unique())!;
+      await ctx.db.patch(txn._id, { updatedAt: Date.now() - 3 * 60_000 });
+    });
+    expect(await t.mutation(internal.payments.sweepStuckInternal, {})).toBe(0);
+    await t.run(async (ctx) => {
+      const txn = (await ctx.db.query("transactions").withIndex("by_transaction_id", (q) => q.eq("transactionId", id)).unique())!;
+      await ctx.db.patch(txn._id, { updatedAt: Date.now() - 12 * 60_000 });
+    });
+    expect(await t.mutation(internal.payments.sweepStuckInternal, {})).toBe(1);
+    expect(await t.mutation(internal.payments.sweepStuckInternal, {})).toBe(0); // job already open
+    const txn = await t.run((ctx) => ctx.db.query("transactions").withIndex("by_transaction_id", (q) => q.eq("transactionId", id)).unique());
+    expect(txn?.outcomeUnknown).toBe(true);
+    const jobs = await t.run((ctx) => ctx.db.query("recoveryJobs").collect());
+    expect(jobs).toHaveLength(1);
+    expect(jobs[0].kind).toBe("charge_status");
+    // Nothing was re-sent to the provider.
+    expect(await t.run((ctx) => ctx.db.query("paymentAttempts").collect())).toHaveLength(before.length);
+  });
+});

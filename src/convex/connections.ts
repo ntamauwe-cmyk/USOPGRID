@@ -254,7 +254,9 @@ export const recordAttemptInternal = internalMutation({
 
     const { row, state } = await loadCircuit(ctx, a.connectionId);
     const next = recordOutcome(state, a.circuit as CircuitOutcome, now, undefined, a.failure?.message);
-    if (next !== state || row) await saveCircuit(ctx, row, a.connectionId, a.providerId, next);
+    // Write only on a real change: a healthy provider's circuit row is then
+    // never written in the hot path, so concurrent payments do not collide.
+    if (circuitChanged(state, next)) await saveCircuit(ctx, row, a.connectionId, a.providerId, next);
     if (next.state === "open" && state.state !== "open") {
       await notify(ctx, {
         orgId: undefined,
@@ -267,50 +269,84 @@ export const recordAttemptInternal = internalMutation({
       });
     }
 
-    // Daily health aggregate (feeds routing statistics and dashboards).
-    const day = utcDay(now);
-    const h = await ctx.db
-      .query("providerHealth")
-      .withIndex("by_provider_env_day", (q) => q.eq("provider", a.providerId).eq("environment", a.environment).eq("day", day))
-      .unique();
-    const inc = {
-      successful: a.status === "successful" ? 1 : 0,
-      failed: a.status === "failed" ? 1 : 0,
-      pending: a.status === "pending" || a.status === "requires_action" ? 1 : 0,
-      declined: a.status === "declined" ? 1 : 0,
-      unknown: a.status === "unknown" ? 1 : 0,
-    };
-    const isErr = a.circuit === "provider_failure";
-    if (!h) {
-      await ctx.db.insert("providerHealth", {
-        provider: a.providerId,
-        environment: a.environment,
-        day,
-        charges: 1,
-        successful: inc.successful,
-        failed: inc.failed,
-        pending: inc.pending,
-        declined: inc.declined,
-        unknown: inc.unknown,
-        latencySumMs: Math.max(0, Math.round(a.latencyMs)),
-        lastErrorAt: isErr ? now : undefined,
-        lastErrorMessage: isErr ? a.failure?.message : undefined,
-        updatedAt: now,
-      });
-    } else {
-      await ctx.db.patch(h._id, {
-        charges: h.charges + 1,
-        successful: h.successful + inc.successful,
-        failed: h.failed + inc.failed,
-        pending: h.pending + inc.pending,
-        declined: (h.declined ?? 0) + inc.declined,
-        unknown: (h.unknown ?? 0) + inc.unknown,
-        latencySumMs: h.latencySumMs + Math.max(0, Math.round(a.latencyMs)),
-        lastErrorAt: isErr ? now : h.lastErrorAt,
-        lastErrorMessage: isErr ? a.failure?.message : h.lastErrorMessage,
-        updatedAt: now,
-      });
+    // Daily health counters are rolled up from paymentAttempts by a single
+    // writer (healthRollupInternal, every minute) instead of here: one shared
+    // counter row updated by every payment was a write hot spot under load.
+  },
+});
+
+function circuitChanged(a: CircuitState, b: CircuitState): boolean {
+  return (
+    a.state !== b.state ||
+    a.consecutiveFailures !== b.consecutiveFailures ||
+    a.openedAt !== b.openedAt ||
+    a.nextProbeAt !== b.nextProbeAt ||
+    a.cooldownMs !== b.cooldownMs ||
+    a.lastFailureReason !== b.lastFailureReason
+  );
+}
+
+/**
+ * Roll new payment attempts up into the daily per-provider health rows.
+ * Single writer (cron), so the counters never contend with payments.
+ */
+export const healthRollupInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cursor = await ctx.db.query("rollupCursors").withIndex("by_name", (q) => q.eq("name", "providerHealth")).unique();
+    const since = cursor?.at ?? Date.now() - 60 * 60_000;
+    const batch = await ctx.db
+      .query("paymentAttempts")
+      .withIndex("by_creation_time", (q) => q.gt("_creationTime", since))
+      .take(2_000);
+    if (batch.length === 0) return 0;
+    type Agg = { provider: string; environment: "sandbox" | "production"; day: string; charges: number; successful: number; failed: number; pending: number; declined: number; unknown: number; latencySumMs: number; lastErrorAt?: number; lastErrorMessage?: string };
+    const groups = new Map<string, Agg>();
+    for (const a of batch) {
+      const day = utcDay(a.startedAt);
+      const k = `${a.providerId}|${a.environment}|${day}`;
+      const g = groups.get(k) ?? { provider: a.providerId, environment: a.environment, day, charges: 0, successful: 0, failed: 0, pending: 0, declined: 0, unknown: 0, latencySumMs: 0 };
+      g.charges++;
+      if (a.status === "successful") g.successful++;
+      else if (a.status === "failed") g.failed++;
+      else if (a.status === "pending" || a.status === "requires_action") g.pending++;
+      else if (a.status === "declined") g.declined++;
+      else if (a.status === "unknown") g.unknown++;
+      g.latencySumMs += Math.max(0, Math.round(a.latencyMs));
+      const providerFault = a.status === "unknown" || (a.status === "failed" && ["timeout", "temporary_provider_failure", "network_error", "provider_outage", "rate_limited"].includes(a.failureCategory ?? ""));
+      if (providerFault) {
+        g.lastErrorAt = a.startedAt + a.latencyMs;
+        g.lastErrorMessage = a.failureMessage ?? a.failureCategory ?? "provider error";
+      }
+      groups.set(k, g);
     }
+    const now = Date.now();
+    for (const g of groups.values()) {
+      const h = await ctx.db
+        .query("providerHealth")
+        .withIndex("by_provider_env_day", (q) => q.eq("provider", g.provider).eq("environment", g.environment).eq("day", g.day))
+        .first();
+      if (!h) {
+        await ctx.db.insert("providerHealth", { ...g, updatedAt: now });
+      } else {
+        await ctx.db.patch(h._id, {
+          charges: h.charges + g.charges,
+          successful: h.successful + g.successful,
+          failed: h.failed + g.failed,
+          pending: h.pending + g.pending,
+          declined: (h.declined ?? 0) + g.declined,
+          unknown: (h.unknown ?? 0) + g.unknown,
+          latencySumMs: h.latencySumMs + g.latencySumMs,
+          lastErrorAt: g.lastErrorAt ?? h.lastErrorAt,
+          lastErrorMessage: g.lastErrorMessage ?? h.lastErrorMessage,
+          updatedAt: now,
+        });
+      }
+    }
+    const last = batch[batch.length - 1]._creationTime;
+    if (cursor) await ctx.db.patch(cursor._id, { at: last });
+    else await ctx.db.insert("rollupCursors", { name: "providerHealth", at: last });
+    return batch.length;
   },
 });
 
