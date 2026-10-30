@@ -114,7 +114,7 @@ Authorization: Bearer sk_live_Q2m...      # production`}</Code>
 
             <section id="sandbox">
               <h2>Sandbox</h2>
-              <p>Sandbox keys reach two simulated rails covering every country, currency and method. Control the outcome with <code>metadata.simulate</code>:</p>
+              <p>Sandbox keys reach two simulated rails covering every country, currency and method. Control the outcome with <code>metadata.simulate</code>. A request with <code>simulate</code> always goes to the simulated rails, even if you have connected providers’ test accounts; leave it out to route to those test accounts instead.</p>
               <table>
                 <thead><tr><th>simulate</th><th>Result</th></tr></thead>
                 <tbody>
